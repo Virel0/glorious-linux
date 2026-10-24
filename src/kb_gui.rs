@@ -1,6 +1,7 @@
 //! Keyboard pages of the GUI (GMMK 3 HE 75% ANSI).
 //!
-//! All device I/O and report building comes from inglorious-core-linux (`glorious_core_rs`):
+//! Report building comes from inglorious-core-linux (vendored in `crate::magneton`), device I/O
+//! from `crate::kbdevice`:
 //! its worker thread owns the keyboard, its `State` holds every profile and layer, and its
 //! `*_changes` functions turn an edit into exactly the reports Glorious CORE would send. The
 //! keyboard can't report lighting, actuation or keymap back, so - like CORE - the last applied
@@ -8,12 +9,12 @@
 use crate::gmmk3he::Component;
 use crate::kbdevice::{self as device, Command, Event};
 use crate::keybed::{self, Look, BADGE};
+use crate::magneton::protocol::{self as p, Actuation, KeyLight};
+use crate::magneton::state::{self, State};
+use crate::magneton::tables::{EFFECTS, KEYCODES, MULTICOLOUR, MULTICOLOUR_ONLY, SINGLE_COLOUR};
 use crate::theme::*;
 use eframe::egui::{self, Color32, RichText, Ui};
 use egui_phosphor::regular as icon;
-use glorious_core_rs::protocol::{self as p, Actuation, KeyLight};
-use glorious_core_rs::state::{self, State};
-use glorious_core_rs::tables::{EFFECTS, KEYCODES, MULTICOLOUR, MULTICOLOUR_ONLY, SINGLE_COLOUR};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};

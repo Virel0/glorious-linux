@@ -5,16 +5,54 @@
 //! reports it carries every keystroke, so the udev rule no longer grants access to it and only
 //! the vendor settings interface (0xFFFF/0x02) is required. Live travel works when the user
 //! chooses to grant that interface too.
+use crate::magneton::protocol::{self as p, Report};
+use crate::magneton::state::State;
 use anyhow::{bail, ensure, Context, Result};
-use glorious_core_rs::device::save_state_to;
-use glorious_core_rs::protocol::{self as p, Report};
-use glorious_core_rs::state::State;
 use hidapi::{HidApi, HidDevice};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
-pub use glorious_core_rs::device::{load_state, state_path};
+/// Where the last applied keyboard settings live; shared with the inglorious-core-linux app.
+pub fn state_path() -> Result<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .context("cannot determine configuration directory")?;
+    Ok(base.join("glorious-core-rs/state.json"))
+}
+
+pub fn load_state() -> Result<State> {
+    let path = state_path()?;
+    let mut s: State = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .with_context(|| format!("invalid state {} (left untouched)", path.display()))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => State::default(),
+        Err(e) => return Err(e.into()),
+    };
+    s.validate()?;
+    s.profiles[s.profile as usize].selected_layer = s.layer;
+    Ok(s)
+}
+
+/// Keep a timestamped backup of the previous file and replace it atomically.
+fn save_state_to(s: &State, path: &Path) -> Result<()> {
+    use std::io::Write;
+    s.validate()?;
+    std::fs::create_dir_all(path.parent().context("state path has no parent")?)?;
+    if path.exists() {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+        std::fs::copy(path, path.with_extension(format!("json.{stamp}.bak")))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let mut file = std::fs::File::create(&tmp)?;
+    file.write_all(&serde_json::to_vec_pretty(s)?)?;
+    file.sync_all()?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
 
 const VID: u16 = 0x342d;
 const PID: u16 = 0xe3de;

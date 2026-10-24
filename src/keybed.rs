@@ -3,9 +3,9 @@
 //! Key positions adapted from inglorious-core-linux (src/ui/widgets.rs, MIT,
 //! Copyright (c) 2026 thomas griffin): (physical key name, label, x, y, width in U) on a grid
 //! where 1U = 56 px including the 4 px gap.
+use crate::magneton::tables::PHYSICAL_KEYS;
 use crate::theme::*;
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, Ui};
-use glorious_core_rs::tables::PHYSICAL_KEYS;
 
 #[rustfmt::skip]
 const KEYBED: &[(&str, &str, f32, f32, f32)] = &[

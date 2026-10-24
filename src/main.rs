@@ -7,6 +7,7 @@ mod hid;
 mod kb_gui;
 mod kbdevice;
 mod keybed;
+mod magneton;
 mod nordic_dfu;
 mod settings;
 mod theme;

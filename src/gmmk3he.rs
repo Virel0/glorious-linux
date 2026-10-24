@@ -1,4 +1,4 @@
-//! GMMK 3 HE status. Device I/O goes through inglorious-core-linux (`glorious_core_rs`), which
+//! GMMK 3 HE status. Device I/O and protocol come from inglorious-core-linux (vendored in src/magneton and src/kbdevice.rs), which
 //! implements the keyboard protocol ("Magneton" in Glorious CORE 2.1.23); this module only
 //! compares the firmware it reports with Glorious' release manifest.
 use crate::firmware;
