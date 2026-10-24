@@ -46,7 +46,7 @@ fn known_hash(url: &str) -> Option<&'static str> {
 }
 
 pub fn manifest() -> Result<serde_json::Value> {
-    ureq::get(MANIFEST_URL).call()?.into_json().context("bad firmware manifest")
+    ureq::get(MANIFEST_URL).call()?.body_mut().read_json().context("bad firmware manifest")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -357,7 +357,7 @@ fn fetch_bundle(url: &str, allow_unverified: bool, emit: &dyn Fn(FlashEvent)) ->
     use sha2::{Digest, Sha256};
     emit(FlashEvent::Log(format!("Downloading {url}")));
     let mut data = Vec::new();
-    ureq::get(url).call()?.into_reader().take(MAX_BUNDLE_BYTES + 1).read_to_end(&mut data)?;
+    ureq::get(url).call()?.into_body().into_reader().take(MAX_BUNDLE_BYTES + 1).read_to_end(&mut data)?;
     if data.len() as u64 > MAX_BUNDLE_BYTES {
         bail!("firmware download is larger than {} MB - refusing it", MAX_BUNDLE_BYTES / 1024 / 1024);
     }
