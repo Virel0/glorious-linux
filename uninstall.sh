@@ -15,13 +15,13 @@ ask() {
     [[ "$reply" =~ ^[Yy] ]]
 }
 
-rm -f "$PREFIX/bin/glorious" "$DATA/applications/glorious-linux.desktop" "$DATA"/icons/hicolor/*/apps/glorious-linux.*
+rm -f "$PREFIX/bin/glorious" "$DATA"/applications/{glorious-linux,io.github.virel0.GloriousLinux}.desktop "$DATA"/icons/hicolor/*/apps/{glorious-linux,io.github.virel0.GloriousLinux}.*
 echo "Removed glorious, its menu entry and icon."
 
 if [ -x "$PREFIX/bin/inglorious-core" ] && ask "Also remove the keyboard configurator (inglorious-core)?"; then
     rm -f "$PREFIX/bin/inglorious-core"
 fi
-if [ -d "$CONFIG" ] && ask "Delete saved mouse settings in $CONFIG?"; then
+if [ -d "$CONFIG" ] && ask "Delete settings saved by older versions in $CONFIG?"; then
     rm -rf "$CONFIG"
 fi
 if [ -f "$RULE" ] && ask "Remove the udev rule (needs sudo)?"; then

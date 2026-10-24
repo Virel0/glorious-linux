@@ -1069,9 +1069,9 @@ pub fn run() -> anyhow::Result<()> {
         "Glorious",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_app_id("glorious-linux")
+                .with_app_id("io.github.virel0.GloriousLinux")
                 .with_icon(std::sync::Arc::new(
-                    eframe::icon_data::from_png_bytes(include_bytes!("../packaging/icons/hicolor/256x256/apps/glorious-linux.png"))
+                    eframe::icon_data::from_png_bytes(include_bytes!("../packaging/icons/hicolor/256x256/apps/io.github.virel0.GloriousLinux.png"))
                         .unwrap_or_default(),
                 ))
                 .with_title("Glorious")

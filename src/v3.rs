@@ -143,9 +143,14 @@ pub struct Mouse {
 impl Mouse {
     /// Prefer a cable connection, then the receiver.
     pub fn open(api: &HidApi, verbose: bool) -> Result<Mouse> {
-        let lock = HID_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let pids: Vec<u16> = MODELS.iter().map(|m| m.2).chain([PID_RECEIVER]).collect();
-        match hid::open(api, VID, &pids, 0xFF00, 0x01)? {
+        Self::open_pids(api, &pids, verbose)
+    }
+
+    /// Open one specific device, e.g. the receiver while the mouse is on its cable.
+    pub fn open_pids(api: &HidApi, pids: &[u16], verbose: bool) -> Result<Mouse> {
+        let lock = HID_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        match hid::open(api, VID, pids, 0xFF00, 0x01)? {
             Some(o) => Ok(Mouse { _lock: lock, dev: o.dev, path: o.path, pid: o.pid, verbose }),
             None => bail!("no Glorious Model O3/D3 or V3 receiver found"),
         }

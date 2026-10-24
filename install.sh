@@ -20,6 +20,7 @@ PREFIX="${PREFIX:-$HOME/.local}"
 BIN="$PREFIX/bin"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 RULE_DEST="/etc/udev/rules.d/70-glorious-linux.rules"
+APP_ID="io.github.virel0.GloriousLinux"
 
 mode="auto" udev=1 deps=1 yes=0
 for arg in "$@"; do
@@ -117,11 +118,13 @@ fi
 
 # ------------------------------------------------------------------ desktop entry + icon
 step "Adding Glorious to your app menu"
-for icon in "$assets"/icons/hicolor/*/apps/glorious-linux.*; do
+# Files from versions before the reverse-DNS app id.
+rm -f "$DATA/applications/glorious-linux.desktop" "$DATA"/icons/hicolor/*/apps/glorious-linux.*
+for icon in "$assets"/icons/hicolor/*/apps/"$APP_ID".*; do
     install -Dm644 "$icon" "$DATA/icons/hicolor/${icon#"$assets"/icons/hicolor/}"
 done
-sed "s|^Exec=.*|Exec=$BIN/glorious|" "$assets/glorious-linux.desktop" > "$work/glorious-linux.desktop"
-install -Dm644 "$work/glorious-linux.desktop" "$DATA/applications/glorious-linux.desktop"
+sed "s|^Exec=.*|Exec=$BIN/glorious|" "$assets/$APP_ID.desktop" > "$work/$APP_ID.desktop"
+install -Dm644 "$work/$APP_ID.desktop" "$DATA/applications/$APP_ID.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$DATA/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$DATA/icons/hicolor" 2>/dev/null || true
 command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true

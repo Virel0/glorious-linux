@@ -37,8 +37,8 @@ package() {
   cd "$pkgname"
   install -Dm755 target/release/glorious "$pkgdir/usr/bin/glorious"
   install -Dm644 packaging/70-glorious-linux.rules "$pkgdir/usr/lib/udev/rules.d/70-glorious-linux.rules"
-  install -Dm644 packaging/glorious-linux.desktop "$pkgdir/usr/share/applications/glorious-linux.desktop"
-  for icon in packaging/icons/hicolor/*/apps/glorious-linux.*; do
+  install -Dm644 packaging/io.github.virel0.GloriousLinux.desktop "$pkgdir/usr/share/applications/io.github.virel0.GloriousLinux.desktop"
+  for icon in packaging/icons/hicolor/*/apps/io.github.virel0.GloriousLinux.*; do
     install -Dm644 "$icon" "$pkgdir/usr/share/icons/hicolor/${icon#packaging/icons/hicolor/}"
   done
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

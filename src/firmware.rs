@@ -72,16 +72,17 @@ pub fn status() -> Result<Status> {
         .iter()
         .find(|x| x.0 == name)
         .ok_or_else(|| anyhow!("unknown mouse model {name:?}"))?;
-    let receiver = if m.via_receiver() {
-        let mut r = m.receiver_firmware()?.to_vec();
-        r.sort();
-        Some(r)
-    } else {
-        None
-    };
+    let mut receiver = if m.via_receiver() { Some(m.receiver_firmware()?.to_vec()) } else { None };
     let color = m.color()?;
     let mouse = m.firmware()?;
     drop(m);
+    // With the mouse on its cable the receiver is a separate device; it still answers for itself.
+    if receiver.is_none() {
+        receiver = Mouse::open_pids(&api, &[v3::PID_RECEIVER], false).ok().and_then(|r| r.receiver_firmware().ok()).map(|r| r.to_vec());
+    }
+    if let Some(r) = receiver.as_mut() {
+        r.sort();
+    }
 
     // The manifest's version_receiver field is stale, so versions come from the bundle name:
     // `<Model>-<mouse>_<receiver A>-<receiver B>_<dock>.zip`.

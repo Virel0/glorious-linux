@@ -5,7 +5,7 @@ updates without Glorious CORE. One Rust app (GUI + CLI), one installer.
 
 > Unofficial. Not affiliated with or endorsed by Glorious. Use at your own risk.
 
-<p align="center"><img src="packaging/icons/hicolor/128x128/apps/glorious-linux.png" width="96" alt=""></p>
+<p align="center"><img src="packaging/icons/hicolor/128x128/apps/io.github.virel0.GloriousLinux.png" width="96" alt=""></p>
 
 ![Overview](docs/overview.png)
 
