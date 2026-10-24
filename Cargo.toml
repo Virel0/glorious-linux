@@ -22,6 +22,6 @@ serde = { version = "1", features = ["derive"] }
 sha2 = "0.11"
 tempfile = "3"
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
-egui-phosphor = "0.11"
+egui-phosphor = "0.14"
 # Keyboard protocol, state and device worker (MIT), pinned to the commit checked against Glorious CORE.
 inglorious-core = { git = "https://github.com/tg5ee/inglorious-core-linux", rev = "2bf5c6faecd7d7337e7f6e0e4e25dfb64524b9f3" }
