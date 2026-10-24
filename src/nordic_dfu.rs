@@ -144,6 +144,7 @@ struct Dfu<'a, P: Read + Write> {
     chunk: usize,
     rx: Vec<u8>,
     log: &'a dyn Fn(String),
+    progress: &'a dyn Fn(f32),
 }
 
 fn le32(b: &[u8]) -> u32 {
@@ -297,6 +298,7 @@ impl<P: Read + Write> Dfu<'_, P> {
             offset += object.len();
             self.verify(offset, crc)?;
             self.request(&[OP_EXECUTE])?;
+            (self.progress)(offset as f32 / image.len() as f32);
             let percent = offset * 100 / image.len();
             if percent >= shown + 10 || offset == image.len() {
                 shown = percent - percent % 10;
@@ -308,8 +310,14 @@ impl<P: Read + Write> Dfu<'_, P> {
 }
 
 /// Run a full DFU over an already opened port.
-pub fn flash_over<P: Read + Write>(port: P, pkg: &Package, opts: Options, log: &dyn Fn(String)) -> Result<()> {
-    let mut dfu = Dfu { port, opts, chunk: 1, rx: Vec::new(), log };
+pub fn flash_over<P: Read + Write>(
+    port: P,
+    pkg: &Package,
+    opts: Options,
+    log: &dyn Fn(String),
+    progress: &dyn Fn(f32),
+) -> Result<()> {
+    let mut dfu = Dfu { port, opts, chunk: 1, rx: Vec::new(), log, progress };
     std::thread::sleep(opts.connect_delay);
     dfu.setup()?;
     log(format!("    sending init packet ({} bytes)", pkg.init.len()));
@@ -321,7 +329,7 @@ pub fn flash_over<P: Read + Write>(port: P, pkg: &Package, opts: Options, log: &
 }
 
 /// Flash the DFU package at `package` through the serial bootloader at `tty`.
-pub fn flash(tty: &str, package: &Path, opts: Options, log: &dyn Fn(String)) -> Result<()> {
+pub fn flash(tty: &str, package: &Path, opts: Options, log: &dyn Fn(String), progress: &dyn Fn(f32)) -> Result<()> {
     let pkg = Package::load(package)?;
     let mut port = serialport::new(tty, 115_200)
         .timeout(Duration::from_millis(200))
@@ -329,7 +337,7 @@ pub fn flash(tty: &str, package: &Path, opts: Options, log: &dyn Fn(String)) -> 
         .open()
         .with_context(|| format!("cannot open {tty}"))?;
     let _ = port.write_data_terminal_ready(true);
-    flash_over(port, &pkg, opts, log)
+    flash_over(port, &pkg, opts, log, progress)
 }
 
 #[cfg(test)]
@@ -423,7 +431,7 @@ mod tests {
                     }
                     assert!(self.object.len() <= self.object_size, "wrote past the object size");
                     self.since_prn += 1;
-                    if self.prn > 0 && self.since_prn % self.prn == 0 {
+                    if self.prn > 0 && self.since_prn.is_multiple_of(self.prn) {
                         self.crc_reply(OP_CRC);
                     }
                 }
@@ -486,7 +494,7 @@ mod tests {
     }
 
     fn run(boot: &mut FakeBootloader, pkg: &Package, prn: u16) -> Result<()> {
-        flash_over(&mut *boot, pkg, opts(prn), &|_| {})
+        flash_over(&mut *boot, pkg, opts(prn), &|_| {}, &|_| {})
     }
 
     #[test]
@@ -505,6 +513,18 @@ mod tests {
         let mut boot = FakeBootloader::new(64, 4096);
         run(&mut boot, &pkg, 1).unwrap();
         assert_eq!(boot.image, pkg.firmware);
+    }
+
+    #[test]
+    fn reports_progress_up_to_one() {
+        let pkg = package(10_000);
+        let mut boot = FakeBootloader::new(131, 4096);
+        let seen = std::cell::RefCell::new(Vec::new());
+        flash_over(&mut boot, &pkg, opts(0), &|_| {}, &|p| seen.borrow_mut().push(p)).unwrap();
+        let seen = seen.into_inner();
+        assert_eq!(seen.len(), 3);
+        assert!(seen.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(*seen.last().unwrap(), 1.0);
     }
 
     #[test]

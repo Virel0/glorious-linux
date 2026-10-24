@@ -5,7 +5,7 @@
 //!   mouse    : HID enter-DFU -> nRF52 serial bootloader -> Nordic serial DFU (nordic_dfu.rs)
 //!   receiver : HID enter-DFU (nRF52) -> Nordic serial DFU -> HID exit-DFU,
 //!              HID enter-DFU (GD32) -> GigaDevice ROM DFU -> `dfu-util`
-//! Progress goes through a `log` callback so the CLI and the GUI share this code.
+//! Progress goes out as `FlashEvent`s so the CLI and the GUI share this code.
 use crate::{hid, nordic_dfu};
 use crate::v3::{self, Mouse, MOUSE, RECEIVER, REPORT_ID, REPORT_LEN, VID};
 use anyhow::{anyhow, bail, Context, Result};
@@ -133,13 +133,51 @@ fn present(api: &mut HidApi, pid: u16) -> bool {
     api.refresh_devices().is_ok() && hid::open(api, VID, &[pid], 0xFF00, 0x01).ok().flatten().is_some()
 }
 
+/// What is plugged in right now: (mouse on its USB cable, receiver).
+pub fn connections() -> (bool, bool) {
+    let Ok(api) = HidApi::new() else { return (false, false) };
+    let has = |pid: u16| api.device_list().any(|d| d.vendor_id() == VID && d.product_id() == pid);
+    (v3::MODELS.iter().any(|m| has(m.2)), has(v3::PID_RECEIVER))
+}
+
+/// Progress of a flash, for the CLI and the GUI.
+#[derive(Clone, Debug)]
+pub enum FlashEvent {
+    Log(String),
+    /// A new step started: (1-based number, total, title).
+    Step(usize, usize, String),
+    /// Progress of the current step, 0..=1.
+    Progress(f32),
+}
+
+/// Pull "NN%" progress out of dfu-util's "Download [=====    ]  45%" lines.
+fn dfu_util_percent(line: &str) -> Option<f32> {
+    if !(line.contains("Download") || line.contains("Erase")) || !line.contains('%') {
+        return None;
+    }
+    let pct = line.split('%').next()?.rsplit(|c: char| !c.is_ascii_digit()).next()?;
+    pct.parse::<f32>().ok().map(|p| (p / 100.0).clamp(0.0, 1.0))
+}
+
 struct Flasher<'a> {
     api: HidApi,
     dry: bool,
-    log: &'a dyn Fn(String),
+    emit: &'a dyn Fn(FlashEvent),
+    step: usize,
+    steps: usize,
 }
 
 impl Flasher<'_> {
+    fn log(&self, line: String) {
+        (self.emit)(FlashEvent::Log(line));
+    }
+
+    fn begin(&mut self, title: &str) {
+        self.step += 1;
+        (self.emit)(FlashEvent::Step(self.step, self.steps, title.to_string()));
+        (self.emit)(FlashEvent::Progress(0.0));
+    }
+
     /// Fire-and-forget: the device resets right after, so there is no reply.
     fn send_dfu(&mut self, pid: u16, target: u8, payload: &[u8]) -> Result<()> {
         let mut buf = [0u8; REPORT_LEN];
@@ -148,7 +186,7 @@ impl Flasher<'_> {
         let hex: Vec<String> = buf[..12].iter().map(|b| format!("{b:02x}")).collect();
         self.api.refresh_devices()?;
         let dev = hid::open(&self.api, VID, &[pid], 0xFF00, 0x01)?;
-        (self.log)(format!("  HID {} <- {}", dev.as_ref().map_or("(not connected)", |d| d.path.as_str()), hex.join(" ")));
+        self.log(format!("  HID {} <- {}", dev.as_ref().map_or("(not connected)", |d| d.path.as_str()), hex.join(" ")));
         if self.dry {
             return Ok(());
         }
@@ -156,9 +194,10 @@ impl Flasher<'_> {
         hid::send_feature(&dev.dev, &buf)
     }
 
-    /// Run an external flasher, streaming its output into the log.
+    /// Run an external flasher, streaming its output into the log and its percentage into
+    /// the progress bar (dfu-util redraws its bar with carriage returns).
     fn run(&self, cmd: &[String]) -> Result<()> {
-        (self.log)(format!("  $ {}", cmd.join(" ")));
+        self.log(format!("  $ {}", cmd.join(" ")));
         if self.dry {
             return Ok(());
         }
@@ -175,18 +214,31 @@ impl Flasher<'_> {
         for pipe in pipes {
             let tx = tx.clone();
             thread::spawn(move || {
-                for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-                    let _ = tx.send(line);
+                for chunk in BufReader::new(pipe).split(b'\n').map_while(Result::ok) {
+                    for piece in chunk.split(|&b| b == b'\r') {
+                        let _ = tx.send(String::from_utf8_lossy(piece).trim_end().to_string());
+                    }
                 }
             });
         }
         drop(tx);
-        for line in rx {
-            (self.log)(format!("    {line}"));
+        let mut last_bar = String::new();
+        for line in rx.into_iter().filter(|l| !l.is_empty()) {
+            match dfu_util_percent(&line) {
+                Some(p) => {
+                    (self.emit)(FlashEvent::Progress(p));
+                    last_bar = line;
+                }
+                None => self.log(format!("    {line}")),
+            }
+        }
+        if !last_bar.is_empty() {
+            self.log(format!("    {last_bar}"));
         }
         if !child.wait()?.success() {
             bail!("{} failed - the device stays in its bootloader, so it is safe to run this again", cmd[0]);
         }
+        (self.emit)(FlashEvent::Progress(1.0));
         Ok(())
     }
 
@@ -202,16 +254,19 @@ impl Flasher<'_> {
     fn nordic(&self, port: &str, package: &str, opts: nordic_dfu::Options) -> Result<()> {
         let pkg = nordic_dfu::Package::load(Path::new(package))?;
         let name = Path::new(package).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        (self.log)(format!(
+        self.log(format!(
             "  Nordic DFU {name} via {port}: init packet {} bytes, firmware {} bytes, receipt every {} packets",
             pkg.init.len(),
             pkg.firmware.len(),
             opts.prn
         ));
         if self.dry {
+            (self.emit)(FlashEvent::Progress(1.0));
             return Ok(());
         }
-        nordic_dfu::flash(port, Path::new(package), opts, self.log)
+        let log = |line: String| self.log(line);
+        let progress = |p: f32| (self.emit)(FlashEvent::Progress(p));
+        nordic_dfu::flash(port, Path::new(package), opts, &log, &progress)
             .context("firmware transfer failed - the device stays in its bootloader, so it is safe to run this again")
     }
 
@@ -223,11 +278,7 @@ impl Flasher<'_> {
     }
 
     fn mouse(&mut self, st: &Status, files: &Files) -> Result<()> {
-        (self.log)("[mouse] needs the USB cable plugged into the mouse".into());
-        if !self.dry {
-            let api = &mut self.api;
-            wait_for("the mouse over USB (plug in the cable)", 60, || present(api, st.wired_pid).then_some(()))?;
-        }
+        self.begin("Mouse");
         self.send_dfu(st.wired_pid, MOUSE, &[&DFU_MAGIC[..], &[0x01]].concat())?;
         let port = self.port(st.boot_pid, "the mouse bootloader")?;
         // CORE runs `nrfutil dfu serial --baud-rate 115200` with nrfutil's defaults otherwise.
@@ -237,7 +288,7 @@ impl Flasher<'_> {
 
     fn receiver(&mut self, files: &Files) -> Result<()> {
         let dfu = |sel: u8, enter: u8| [&DFU_MAGIC[..], &[sel, enter]].concat();
-        (self.log)("[receiver] step 1/2: nRF52 radio".into());
+        self.begin("Receiver radio (nRF52)");
         self.send_dfu(v3::PID_RECEIVER, RECEIVER, &dfu(SEL_NRF52, 1))?;
         let port = self.port(v3::PID_RECEIVER_BOOT, "the receiver nRF bootloader")?;
         // Same settings CORE passes to nrfutil for the receiver: a receipt after every packet,
@@ -251,7 +302,7 @@ impl Flasher<'_> {
         }
         self.wait_back(v3::PID_RECEIVER, "the receiver to come back")?;
 
-        (self.log)("[receiver] step 2/2: GD32 USB controller".into());
+        self.begin("Receiver USB chip (GD32)");
         self.send_dfu(v3::PID_RECEIVER, RECEIVER, &dfu(SEL_GD32, 1))?;
         if !self.dry {
             sleep(Duration::from_secs(3));
@@ -273,8 +324,8 @@ impl Drop for Files {
     }
 }
 
-fn fetch_bundle(url: &str, log: &dyn Fn(String)) -> Result<Files> {
-    log(format!("Downloading {url}"));
+fn fetch_bundle(url: &str, emit: &dyn Fn(FlashEvent)) -> Result<Files> {
+    emit(FlashEvent::Log(format!("Downloading {url}")));
     let mut data = Vec::new();
     ureq::get(url).call()?.into_reader().read_to_end(&mut data)?;
     let workdir = std::env::temp_dir().join(format!("glorious-fw-{}", std::process::id()));
@@ -301,26 +352,46 @@ fn fetch_bundle(url: &str, log: &dyn Fn(String)) -> Result<Files> {
     Ok(files)
 }
 
-/// Flash the parts selected by `st.plan(part, force)`. The caller is responsible for confirmation.
-pub fn flash(st: &Status, part: Part, force: bool, dry: bool, log: &dyn Fn(String)) -> Result<()> {
+/// Why `flash` would refuse right now, if it would.
+pub fn blocker(st: &Status, part: Part, force: bool, dry: bool) -> Option<String> {
     let (do_mouse, do_recv) = st.plan(part, force);
     if !(do_mouse || do_recv) {
-        log("Nothing to flash.".into());
-        return Ok(());
+        return Some("Everything is up to date - nothing to flash.".into());
+    }
+    if dry {
+        return None;
+    }
+    let (cabled, receiver) = connections();
+    if do_mouse && !cabled {
+        return Some("Plug the USB cable into the mouse - mouse updates only run over the cable.".into());
+    }
+    if do_recv && !receiver {
+        return Some("Plug in the wireless receiver to update it.".into());
     }
     let missing = missing_tools(do_recv);
-    if !dry && !missing.is_empty() {
-        bail!("missing tools: {}", missing.join(", "));
+    if !missing.is_empty() {
+        return Some(format!("Missing {}", missing.join(", ")));
     }
-    let files = fetch_bundle(&st.url, log)?;
-    let mut f = Flasher { api: HidApi::new()?, dry, log };
+    None
+}
+
+/// Flash the parts selected by `st.plan(part, force)`. The caller is responsible for confirmation.
+/// Refuses up front (without touching anything) when a needed device or tool is missing.
+pub fn flash(st: &Status, part: Part, force: bool, dry: bool, emit: &dyn Fn(FlashEvent)) -> Result<()> {
+    if let Some(reason) = blocker(st, part, force, dry) {
+        bail!("{reason}");
+    }
+    let (do_mouse, do_recv) = st.plan(part, force);
+    let files = fetch_bundle(&st.url, emit)?;
+    let steps = usize::from(do_mouse) + if do_recv { 2 } else { 0 };
+    let mut f = Flasher { api: HidApi::new()?, dry, emit, step: 0, steps };
     if do_mouse {
         f.mouse(st, &files)?;
     }
     if do_recv {
         f.receiver(&files)?;
     }
-    log(if dry { "Dry run finished - nothing was sent.".into() } else { "Done. Check again to confirm the new versions.".into() });
+    f.log(if dry { "Dry run finished - nothing was sent.".into() } else { "Done. Check again to confirm the new versions.".into() });
     Ok(())
 }
 
@@ -335,8 +406,11 @@ pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool) -> Result<
     if !flash_requested {
         return Ok(());
     }
-    let (m, r) = st.plan(part, force);
-    if !dry && (m || r) {
+    if let Some(reason) = blocker(&st, part, force, dry) {
+        println!("{reason}");
+        return Ok(());
+    }
+    if !dry {
         println!("Do not unplug anything while flashing. Type 'yes' to start:");
         let mut answer = String::new();
         std::io::stdin().lock().read_line(&mut answer)?;
@@ -344,5 +418,38 @@ pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool) -> Result<
             return Ok(());
         }
     }
-    flash(&st, part, force, dry, &|line| println!("{line}"))
+    let bar = std::cell::Cell::new(false);
+    flash(&st, part, force, dry, &|event| match event {
+        FlashEvent::Log(line) => {
+            if bar.replace(false) {
+                eprintln!();
+            }
+            println!("{line}");
+        }
+        FlashEvent::Step(n, of, title) => println!("\n[{n}/{of}] {title}"),
+        FlashEvent::Progress(p) => {
+            let filled = (p * 30.0).round() as usize;
+            eprint!("\r  [{}{}] {:>3.0}%", "#".repeat(filled), " ".repeat(30 - filled.min(30)), p * 100.0);
+            bar.set(true);
+        }
+    })?;
+    if bar.get() {
+        eprintln!();
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dfu_util_percent;
+
+    #[test]
+    fn parses_dfu_util_progress_lines() {
+        assert_eq!(dfu_util_percent("Download\t[==========               ]  41%        11264 bytes"), Some(0.41));
+        assert_eq!(dfu_util_percent("Download\t[=========================] 100%        28052 bytes"), Some(1.0));
+        assert_eq!(dfu_util_percent("Erase   \t[====                     ]  16%         4096 bytes"), Some(0.16));
+        assert_eq!(dfu_util_percent("Downloading element to address = 0x08000000, size = 28052"), None);
+        assert_eq!(dfu_util_percent("Download done."), None);
+        assert_eq!(dfu_util_percent("Opening DFU capable USB device..."), None);
+    }
 }

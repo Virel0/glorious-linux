@@ -64,7 +64,9 @@ enum Msg {
     ActiveStage(Result<u8, String>),
     Applied(Result<Applied, String>),
     FwStatus(Result<(firmware::Status, Vec<&'static str>), String>),
-    FwLog(String),
+    Fw(firmware::FlashEvent),
+    /// (mouse on its cable, receiver plugged in, missing tools)
+    FwConnections(bool, bool, Vec<&'static str>),
     FwDone(Result<(), String>),
     KbFirmware(Result<Vec<gmmk3he::Component>, String>),
 }
@@ -106,6 +108,14 @@ pub struct App {
     fw_force: bool,
     fw_confirm: bool,
     flashing: bool,
+    /// Current flash step (number, total, title) and its progress.
+    fw_step: Option<(usize, usize, String)>,
+    fw_progress: f32,
+    fw_result: Option<bool>,
+    fw_cabled: bool,
+    fw_receiver: bool,
+    fw_conn_checking: bool,
+    fw_last_conn: Instant,
     keyboard: Keyboard,
     kb_fw_busy: bool,
     keys: Vec<(String, u8)>,
@@ -243,6 +253,13 @@ impl App {
             fw_force: false,
             fw_confirm: false,
             flashing: false,
+            fw_step: None,
+            fw_progress: 0.0,
+            fw_result: None,
+            fw_cabled: false,
+            fw_receiver: false,
+            fw_conn_checking: false,
+            fw_last_conn: Instant::now() - Duration::from_secs(60),
             keyboard: Keyboard::new(),
             kb_fw_busy: false,
             keys: key_names(),
@@ -312,13 +329,26 @@ impl App {
         self.flashing = true;
         self.fw_confirm = false;
         self.fw_log.clear();
+        self.fw_step = None;
+        self.fw_progress = 0.0;
+        self.fw_result = None;
         self.spawn(ctx, move |tx, ctx| {
-            let log = |line: String| {
-                let _ = tx.send(Msg::FwLog(line));
+            let emit = |event: firmware::FlashEvent| {
+                let _ = tx.send(Msg::Fw(event));
                 ctx.request_repaint();
             };
-            let r = firmware::flash(&st, part, force, dry, &log);
+            let r = firmware::flash(&st, part, force, dry, &emit);
             let _ = tx.send(Msg::FwDone(r.map_err(|e| format!("{e:#}"))));
+        });
+    }
+
+    /// Watch for the mouse cable and the receiver while the Firmware page is open.
+    fn check_connections(&mut self, ctx: &egui::Context) {
+        self.fw_conn_checking = true;
+        self.fw_last_conn = Instant::now();
+        self.spawn(ctx, |tx, _| {
+            let (cabled, receiver) = firmware::connections();
+            let _ = tx.send(Msg::FwConnections(cabled, receiver, firmware::missing_tools(true)));
         });
     }
 
@@ -461,9 +491,22 @@ impl App {
                     Err(e) => self.fw_error = Some(e),
                 }
             }
-            Msg::FwLog(line) => self.fw_log.push(line),
+            Msg::Fw(event) => match event {
+                firmware::FlashEvent::Log(line) => self.fw_log.push(line),
+                firmware::FlashEvent::Step(n, of, title) => {
+                    self.fw_log.push(format!("[{n}/{of}] {title}"));
+                    self.fw_step = Some((n, of, title));
+                    self.fw_progress = 0.0;
+                }
+                firmware::FlashEvent::Progress(p) => self.fw_progress = p,
+            },
+            Msg::FwConnections(cabled, receiver, missing) => {
+                self.fw_conn_checking = false;
+                (self.fw_cabled, self.fw_receiver, self.fw_missing) = (cabled, receiver, missing);
+            }
             Msg::FwDone(r) => {
                 self.flashing = false;
+                self.fw_result = Some(r.is_ok());
                 match r {
                     Ok(()) => self.toast(if self.fw_dry { "Dry run finished" } else { "Firmware update finished" }, true),
                     Err(e) => {
@@ -825,6 +868,48 @@ impl App {
         });
     }
 
+    /// Step and progress of a running (or just finished) update.
+    fn flash_progress(&self, ui: &mut Ui) {
+        let title = match (self.flashing, self.fw_result) {
+            (true, _) => "Updating - keep everything plugged in",
+            (false, Some(true)) => if self.fw_dry { "Dry run finished" } else { "Update finished" },
+            _ => "Update stopped",
+        };
+        card(ui, icon::DOWNLOAD_SIMPLE, title, |ui| {
+            match &self.fw_step {
+                Some((n, of, step)) => {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Step {n} of {of}")).color(DIM));
+                        ui.label(RichText::new(step).color(TEXT));
+                        if self.flashing {
+                            ui.spinner();
+                        }
+                    });
+                    let p = if self.fw_result == Some(true) && *n == *of { 1.0 } else { self.fw_progress };
+                    ui.add(egui::ProgressBar::new(p).text(format!("{:.0}%", p * 100.0)).desired_width(ui.available_width()));
+                    let overall = ((*n - 1) as f32 + p) / *of as f32;
+                    ui.add(egui::ProgressBar::new(overall).desired_height(6.0).desired_width(ui.available_width()));
+                }
+                None if self.flashing => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Downloading firmware from Glorious...").color(DIM));
+                    });
+                }
+                None => {}
+            }
+            match self.fw_result {
+                Some(true) if !self.fw_dry => {
+                    ui.label(RichText::new(format!("{} Done. Press \"Check again\" to confirm the new versions.", icon::CHECK_CIRCLE)).color(OK));
+                }
+                Some(false) => {
+                    ui.label(RichText::new(format!("{} Stopped - see the log. A device left in its bootloader is safe; run the update again.", icon::WARNING)).color(ERR));
+                }
+                _ => {}
+            }
+        });
+    }
+
     fn firmware_tab(&mut self, ui: &mut Ui) {
         let mut check = false;
         page_header(ui, "Firmware", "Updates from Glorious for your mouse, receiver and keyboard", |ui| {
@@ -870,30 +955,54 @@ impl App {
                     toggle(ui, &mut self.fw_force);
                 });
                 let (m, r) = st.plan(self.fw_part, self.fw_force);
-                if m {
-                    info_banner(ui, &format!("{} The mouse update needs the USB cable plugged into the mouse.", icon::USB));
+                if m || r {
+                    ui.horizontal(|ui| {
+                        row_label(ui, "Connected", "");
+                        if m {
+                            let (glyph, text, color) = if self.fw_cabled { (icon::CHECK_CIRCLE, "Mouse cable plugged in", OK) } else { (icon::USB, "Mouse cable not plugged in", WARN) };
+                            pill(ui, glyph, text, color);
+                        }
+                        if r {
+                            let (glyph, text, color) = if self.fw_receiver { (icon::CHECK_CIRCLE, "Receiver plugged in", OK) } else { (icon::PLUG, "Receiver not plugged in", WARN) };
+                            pill(ui, glyph, text, color);
+                        }
+                    });
                 }
-                if !self.fw_dry {
-                    for tool in &self.fw_missing {
-                        info_banner(ui, &format!("{} Missing {tool}", icon::WARNING));
-                    }
+                // Same rules as firmware::blocker, from the live connection check.
+                let blocker = if !(m || r) {
+                    Some("Everything is up to date - nothing to flash.".to_string())
+                } else if self.fw_dry {
+                    None
+                } else if m && !self.fw_cabled {
+                    Some(format!("{} Plug the USB cable into the mouse - mouse updates only run over the cable.", icon::USB))
+                } else if r && !self.fw_receiver {
+                    Some(format!("{} Plug in the wireless receiver to update it.", icon::PLUG))
+                } else if r && !self.fw_missing.is_empty() {
+                    Some(format!("{} Missing {}", icon::WARNING, self.fw_missing.join(", ")))
+                } else {
+                    None
+                };
+                if let (Some(b), true) = (&blocker, m || r) {
+                    info_banner(ui, b);
+                }
+                if !self.fw_dry && blocker.is_none() {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut self.fw_confirm, "");
                         ui.label(RichText::new("I'll keep the mouse and receiver plugged in until this finishes").color(TEXT));
                     });
                 }
                 ui.add_space(4.0);
-                let ready = (m || r) && (self.fw_dry || (self.fw_confirm && self.fw_missing.is_empty()));
+                let ready = blocker.is_none() && (self.fw_dry || self.fw_confirm);
                 ui.horizontal(|ui| {
                     flash = primary(ui, ready && !self.flashing && !self.mouse_busy, if self.fw_dry { "Run dry run" } else { "Update firmware" });
-                    if self.flashing {
-                        ui.spinner();
-                    }
                     if !(m || r) {
                         ui.label(RichText::new("Everything is up to date - nothing to flash.").color(DIM));
                     }
                 });
             });
+            if self.flashing || self.fw_result.is_some() {
+                self.flash_progress(ui);
+            }
         } else if self.fw_busy {
             ui.horizontal(|ui| {
                 ui.spinner();
@@ -980,6 +1089,9 @@ impl eframe::App for App {
         ctx.request_repaint_after(if live_tab { STAGE_POLL } else { Duration::from_secs(1) });
         if self.tab == Tab::Firmware && self.fw_status.is_none() && self.fw_error.is_none() && !self.fw_busy {
             self.check_firmware(ctx);
+        }
+        if self.tab == Tab::Firmware && !self.flashing && !self.fw_conn_checking && self.fw_last_conn.elapsed() >= Duration::from_millis(1500) {
+            self.check_connections(ctx);
         }
         if self.dirty() && !self.busy() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
             self.apply(ctx);
