@@ -3,9 +3,9 @@
 ## v0.5.0
 
 **Security**
-- The udev rule now only opens the interfaces the app needs. The keyboard's key-report
-  interfaces and the receiver's keystroke interface are no longer accessible to your user
-  programs, so they can't be used to read your typing. The keyboard's live travel meter is off
+- The udev rule now only opens the interfaces the app needs (verified with `udevadm test` and on
+  real devices). The keyboard's key-report interfaces and the receiver's and wired mouse's
+  keystroke interfaces are no longer accessible to your user programs, so they can't be used to read your typing. The keyboard's live travel meter is off
   as a result (opt-in line in the rule file).
 - Firmware bundles are checked against pinned SHA-256 hashes before flashing; unknown (newer)
   bundles need explicit confirmation. Downloads are size-capped.

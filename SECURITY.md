@@ -20,12 +20,12 @@ the interfaces the app uses:
 | Device | Access | Why |
 |---|---|---|
 | V3 wireless receiver | interface 0 (vendor settings) | mouse settings and firmware commands |
-| Model D3 / O3 on USB | HID | settings and the firmware-update command |
+| Model D3 / O3 on USB | interface 0 (vendor settings) | settings and the firmware-update command |
 | GMMK 3 HE 75% | interface 2 (vendor settings) | keyboard settings |
 | Mouse / receiver bootloaders | serial port, GD32 DFU | firmware updates |
 
-HID interfaces that carry typing - the keyboard's own key reports and the receiver's interface
-for keys bound to mouse buttons - are deliberately **not** opened to your user, so other programs
+HID interfaces that carry typing - the keyboard's own key reports, and the receiver's and the
+wired mouse's interfaces for keys bound to mouse buttons - are deliberately **not** opened to your user, so other programs
 can't read your keystrokes through them. The keyboard's live key-travel meter needs one of those
 interfaces and is therefore off; the rule file has a commented-out line to enable it if you
 accept that trade-off.

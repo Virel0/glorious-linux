@@ -16,8 +16,9 @@ ATTRS{idVendor}=="342d", ATTRS{idProduct}=="e3de", ENV{GLORIOUS_HID}="gmmk3he"
 
 # V3 wireless receiver: vendor settings interface only (interface 0; interface 1 sends keystrokes).
 ENV{GLORIOUS_HID}=="receiver", ATTRS{bInterfaceNumber}=="00", TAG+="uaccess"
-# Model D3 / O3 on their USB cable (settings and the firmware-update command).
-ENV{GLORIOUS_HID}=="wired-mouse", TAG+="uaccess"
+# Model D3 / O3 on their USB cable: vendor settings interface only (interface 0, as on the
+# receiver; interface 1 sends keystrokes). Also used for the firmware-update command.
+ENV{GLORIOUS_HID}=="wired-mouse", ATTRS{bInterfaceNumber}=="00", TAG+="uaccess"
 # GMMK 3 HE 75%: vendor settings interface only (interface 2).
 ENV{GLORIOUS_HID}=="gmmk3he", ATTRS{bInterfaceNumber}=="02", TAG+="uaccess"
 # Optional: live key-travel meter. Interface 1 also carries every keystroke, so only enable this
