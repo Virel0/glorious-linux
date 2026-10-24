@@ -195,7 +195,7 @@ No Glorious code, binaries or firmware are included in this repository.
 - [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux) (MIT) - keyboard
   protocol library and board layout
 - Space Grotesk, Work Sans and JetBrains Mono fonts (SIL Open Font License, see `assets/fonts`)
-- [Phosphor](https://phosphoricons.com) icons via egui-phosphor, built with [egui](https://github.com/emilk/egui)
+- [Phosphor](https://phosphoricons.com) icons (MIT, bundled in `assets/fonts`), built with [egui](https://github.com/emilk/egui)
 
 ## License
 
@@ -204,6 +204,6 @@ anyone may use, study, change and share it, including commercially, but copies a
 versions they distribute must stay under the GPL with their source available, and devices that
 ship it can't be locked against running modified versions.
 
-Releases up to v0.3.0 were published under the MIT license. The keyboard layout table in
-`src/keybed.rs` and the keyboard I/O in `src/kbdevice.rs` come from inglorious-core-linux and
-keep its MIT notice.
+Releases up to v0.3.0 were published under the MIT license. The keyboard protocol code in
+`src/magneton`, the board layout in `src/keybed.rs` and the keyboard I/O in `src/kbdevice.rs` come
+from inglorious-core-linux and keep its MIT notice.

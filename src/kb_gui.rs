@@ -1,19 +1,20 @@
 //! Keyboard pages of the GUI (GMMK 3 HE 75% ANSI).
 //!
-//! All device I/O and report building comes from inglorious-core-linux (`glorious_core_rs`):
+//! Report building comes from inglorious-core-linux (vendored in `crate::magneton`), device I/O
+//! from `crate::kbdevice`:
 //! its worker thread owns the keyboard, its `State` holds every profile and layer, and its
 //! `*_changes` functions turn an edit into exactly the reports Glorious CORE would send. The
 //! keyboard can't report lighting, actuation or keymap back, so - like CORE - the last applied
 //! values live in that library's state file (shared with the inglorious-core app).
 use crate::gmmk3he::Component;
+use crate::icons as icon;
 use crate::kbdevice::{self as device, Command, Event};
 use crate::keybed::{self, Look, BADGE};
+use crate::magneton::protocol::{self as p, Actuation, KeyLight};
+use crate::magneton::state::{self, State};
+use crate::magneton::tables::{EFFECTS, KEYCODES, MULTICOLOUR, MULTICOLOUR_ONLY, SINGLE_COLOUR};
 use crate::theme::*;
 use eframe::egui::{self, Color32, RichText, Ui};
-use egui_phosphor::regular as icon;
-use glorious_core_rs::protocol::{self as p, Actuation, KeyLight};
-use glorious_core_rs::state::{self, State};
-use glorious_core_rs::tables::{EFFECTS, KEYCODES, MULTICOLOUR, MULTICOLOUR_ONLY, SINGLE_COLOUR};
 use std::collections::BTreeSet;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -28,6 +29,8 @@ const PALETTE: [[u8; 3]; 8] = [
     [0x0A, 0x84, 0xFF], [0x00, 0xC7, 0xBE], [0x34, 0xC7, 0x59], [0xFF, 0xFF, 0xFF],
 ];
 const INFO_REFRESH: Duration = Duration::from_secs(20);
+/// Until the keyboard has answered once, keep trying more often.
+const CONNECT_RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -185,7 +188,8 @@ impl Keyboard {
                 Event::Live(v) => self.live_value = v,
             }
         }
-        if !self.busy && self.last_info.elapsed() >= INFO_REFRESH {
+        let wait = if self.connected { INFO_REFRESH } else { CONNECT_RETRY };
+        if !self.busy && self.last_info.elapsed() >= wait {
             self.refresh();
         }
         if self.live && !page_open {
@@ -299,6 +303,12 @@ impl Keyboard {
         !self.connected && self.error.is_none() && self.started.elapsed() < Duration::from_secs(10)
     }
 
+    /// The keyboard is missing (as opposed to answering badly).
+    fn missing(&self) -> bool {
+        self.error.as_deref().is_some_and(|e| e.contains("not found") || e.contains("cannot open"))
+            || (self.error.is_none() && !self.connecting())
+    }
+
     /// While the keyboard isn't answering, keep the page (from the saved settings) and say why
     /// in a slim banner, instead of swapping the whole page out.
     fn status_banner(&self, ui: &mut Ui) {
@@ -317,13 +327,19 @@ impl Keyboard {
                     if connecting {
                         ui.spinner();
                         ui.label(RichText::new("Connecting to your keyboard...").color(TEXT));
-                    } else {
+                    } else if self.missing() {
                         ui.label(RichText::new(icon::PLUG).size(16.0).color(WARN));
                         ui.label(
                             RichText::new(
                                 "Keyboard not found - plug it in. Showing your saved settings; applying is paused.",
                             )
                             .color(TEXT),
+                        );
+                    } else {
+                        ui.spinner();
+                        let why = self.error.clone().unwrap_or_default();
+                        ui.label(
+                            RichText::new(format!("The keyboard didn't answer ({why}) - retrying...")).color(TEXT),
                         );
                     }
                 });

@@ -3,9 +3,9 @@
 //! Key positions adapted from inglorious-core-linux (src/ui/widgets.rs, MIT,
 //! Copyright (c) 2026 thomas griffin): (physical key name, label, x, y, width in U) on a grid
 //! where 1U = 56 px including the 4 px gap.
+use crate::magneton::tables::PHYSICAL_KEYS;
 use crate::theme::*;
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, Ui};
-use glorious_core_rs::tables::PHYSICAL_KEYS;
 
 #[rustfmt::skip]
 const KEYBED: &[(&str, &str, f32, f32, f32)] = &[
@@ -28,10 +28,10 @@ const KEYBED: &[(&str, &str, f32, f32, f32)] = &[
     ("ShiftLeft", "Shift", 20., 258., 2.25), ("KeyZ", "Z", 146., 258., 1.), ("KeyX", "X", 202., 258., 1.), ("KeyC", "C", 258., 258., 1.),
     ("KeyV", "V", 314., 258., 1.), ("KeyB", "B", 370., 258., 1.), ("KeyN", "N", 426., 258., 1.), ("KeyM", "M", 482., 258., 1.),
     ("Comma", ",", 538., 258., 1.), ("Period", ".", 594., 258., 1.), ("Slash", "/", 650., 258., 1.), ("ShiftRight", "Shift", 706., 258., 1.75),
-    ("ArrowUp", egui_phosphor::regular::ARROW_UP, 804., 258., 1.), ("End", "End", 860., 258., 1.),
+    ("ArrowUp", crate::icons::ARROW_UP, 804., 258., 1.), ("End", "End", 860., 258., 1.),
     ("ControlLeft", "Ctrl", 20., 314., 1.25), ("MetaLeft", "Super", 90., 314., 1.25), ("AltLeft", "Alt", 160., 314., 1.25),
     ("Space", "", 230., 314., 6.25), ("AltRight", "Alt", 580., 314., 1.25), ("Fn", "Fn", 650., 314., 1.25),
-    ("ArrowLeft", egui_phosphor::regular::ARROW_LEFT, 748., 314., 1.), ("ArrowDown", egui_phosphor::regular::ARROW_DOWN, 804., 314., 1.), ("ArrowRight", egui_phosphor::regular::ARROW_RIGHT, 860., 314., 1.),
+    ("ArrowLeft", crate::icons::ARROW_LEFT, 748., 314., 1.), ("ArrowDown", crate::icons::ARROW_DOWN, 804., 314., 1.), ("ArrowRight", crate::icons::ARROW_RIGHT, 860., 314., 1.),
 ];
 /// Colour index of the logo badge.
 pub const BADGE: u8 = 158;
@@ -87,8 +87,9 @@ pub fn show(ui: &mut Ui, look: &dyn Fn(u8) -> Look) -> Option<u8> {
     let value_font = FontId::monospace((10.0 * s).max(9.0));
     let mut clicked = None;
     let mut cap = |ui: &mut Ui, r: Rect, idx: u8, text: &str| {
-        let resp =
-            ui.interact(r, ui.id().with(("key", idx)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        let resp = ui
+            .interact(r, ui.scope_id().with(("key", idx)), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
         if resp.clicked() {
             clicked = Some(idx);
         }

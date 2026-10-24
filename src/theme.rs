@@ -49,7 +49,15 @@ pub fn install(ctx: &egui::Context) {
     ] {
         fonts.families.entry(family).or_insert_with(|| fallback.clone()).insert(0, font.into());
     }
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    // Phosphor icons right after each family's text font, so icons mix into ordinary labels.
+    let icons: &'static [u8] = include_bytes!("../assets/fonts/Phosphor.ttf");
+    fonts.font_data.insert("phosphor".into(), Arc::new(egui::FontData::from_static(icons)));
+    for family in [FontFamily::Proportional, strong_family(), heading_family(), FontFamily::Name("brand".into())] {
+        if let Some(list) = fonts.families.get_mut(&family) {
+            let at = list.len().min(1);
+            list.insert(at, "phosphor".into());
+        }
+    }
     ctx.set_fonts(fonts);
 
     ctx.set_theme(egui::Theme::Dark);
@@ -146,7 +154,7 @@ pub fn pill(ui: &mut Ui, icon: &str, text: &str, color: Color32) {
 }
 
 pub fn status_pill(ui: &mut Ui, outdated: bool) {
-    use egui_phosphor::regular as i;
+    use crate::icons as i;
     if outdated {
         pill(ui, i::DOWNLOAD_SIMPLE, "Update available", WARN);
     } else {
