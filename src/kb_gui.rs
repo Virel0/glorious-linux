@@ -43,6 +43,8 @@ pub struct Keyboard {
     draft: State,
     had_state_file: bool,
     pub connected: bool,
+    /// When the app started talking to the keyboard; the first read takes a few seconds.
+    started: Instant,
     pub error: Option<String>,
     pub fw: Option<String>,
     pub components: Option<Vec<Component>>,
@@ -108,6 +110,7 @@ impl Keyboard {
             saved,
             had_state_file,
             connected: false,
+            started: Instant::now(),
             error,
             fw: None,
             components: None,
@@ -290,20 +293,36 @@ impl Keyboard {
 
     // ------------------------------------------------------------------ pages
 
-    fn not_connected(&self, ui: &mut Ui) -> bool {
+    /// True during the first few seconds, before the keyboard has answered.
+    pub fn connecting(&self) -> bool {
+        !self.connected && self.error.is_none() && self.started.elapsed() < Duration::from_secs(10)
+    }
+
+    /// While the keyboard isn't answering, keep the page (from the saved settings) and say why
+    /// in a slim banner, instead of swapping the whole page out.
+    fn status_banner(&self, ui: &mut Ui) {
         if self.connected {
-            return false;
+            return;
         }
-        egui::Frame::new().fill(SURFACE).stroke(egui::Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(32).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new(icon::KEYBOARD).size(44.0).color(WARN));
-                ui.label(RichText::new("No keyboard found").family(heading_family()).size(20.0).color(TEXT));
-                let detail = self.error.clone().unwrap_or_else(|| "Looking for your GMMK 3 HE...".into());
-                ui.label(RichText::new(detail).color(DIM));
+        let connecting = self.connecting();
+        egui::Frame::new()
+            .fill(if connecting { SURFACE } else { WARN.gamma_multiply(0.10) })
+            .stroke(egui::Stroke::new(1.0_f32, if connecting { BORDER } else { WARN.gamma_multiply(0.35) }))
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(14, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    if connecting {
+                        ui.spinner();
+                        ui.label(RichText::new("Connecting to your keyboard...").color(TEXT));
+                    } else {
+                        ui.label(RichText::new(icon::PLUG).size(16.0).color(WARN));
+                        ui.label(RichText::new("Keyboard not found - plug it in. Showing your saved settings; applying is paused.").color(TEXT));
+                    }
+                });
             });
-        });
-        true
+        ui.add_space(12.0);
     }
 
     fn layer_bar(&mut self, ui: &mut Ui) {
@@ -326,17 +345,19 @@ impl Keyboard {
                 ui.spinner();
             }
         });
-        if self.not_connected(ui) {
-            return;
-        }
+        self.status_banner(ui);
         let mut switch = None;
         egui::Frame::new().fill(SURFACE).stroke(egui::Stroke::new(1.0_f32, BORDER)).corner_radius(16).inner_margin(24).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(RichText::new(crate::gmmk3he::NAME).family(heading_family()).size(28.0).color(TEXT));
             ui.horizontal(|ui| {
-                pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
-                pill(ui, icon::USB, "Wired", ACCENT);
-                pill(ui, "", &format!("{} layer active", LAYERS[self.active.1 as usize % 3]), DIM);
+                if self.connected {
+                    pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
+                    pill(ui, icon::USB, "Wired", ACCENT);
+                    pill(ui, "", &format!("{} layer active", LAYERS[self.active.1 as usize % 3]), DIM);
+                } else {
+                    pill(ui, icon::PLUG, "Not connected", DIM);
+                }
             });
             ui.add_space(14.0);
             ui.horizontal(|ui| {
@@ -387,9 +408,7 @@ impl Keyboard {
 
     pub fn lighting(&mut self, ui: &mut Ui) {
         page_header(ui, "Key lighting", "Effects, side lights and per-key colours", |_| {});
-        if self.not_connected(ui) {
-            return;
-        }
+        self.status_banner(ui);
         let paint = self.paint;
         let l = self.draft.lighting_state_mut();
         card(ui, icon::SPARKLE, "Effect", |ui| {
@@ -525,9 +544,7 @@ impl Keyboard {
 
     pub fn actuation(&mut self, ui: &mut Ui) {
         page_header(ui, "Actuation", "Hall-effect press point, rapid trigger and dead zone", |_| {});
-        if self.not_connected(ui) {
-            return;
-        }
+        self.status_banner(ui);
         self.layer_bar(ui);
         ui.add_space(8.0);
         let layer = self.draft.current_mut();
@@ -632,9 +649,7 @@ impl Keyboard {
 
     pub fn keymap(&mut self, ui: &mut Ui) {
         page_header(ui, "Keymap", "Remap any key on any layer", |_| {});
-        if self.not_connected(ui) {
-            return;
-        }
+        self.status_banner(ui);
         self.layer_bar(ui);
         ui.add_space(8.0);
         let selected = self.selected.iter().next().copied();

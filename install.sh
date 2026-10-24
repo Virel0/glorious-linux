@@ -117,11 +117,14 @@ fi
 
 # ------------------------------------------------------------------ desktop entry + icon
 step "Adding Glorious to your app menu"
-install -Dm644 "$assets/glorious-linux.svg" "$DATA/icons/hicolor/scalable/apps/glorious-linux.svg"
+for icon in "$assets"/icons/hicolor/*/apps/glorious-linux.*; do
+    install -Dm644 "$icon" "$DATA/icons/hicolor/${icon#"$assets"/icons/hicolor/}"
+done
 sed "s|^Exec=.*|Exec=$BIN/glorious|" "$assets/glorious-linux.desktop" > "$work/glorious-linux.desktop"
 install -Dm644 "$work/glorious-linux.desktop" "$DATA/applications/glorious-linux.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database -q "$DATA/applications" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t "$DATA/icons/hicolor" 2>/dev/null || true
+command -v kbuildsycoca6 >/dev/null && kbuildsycoca6 >/dev/null 2>&1 || true
 ok "menu entry and icon installed"
 
 # ------------------------------------------------------------------ udev rule

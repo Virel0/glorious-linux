@@ -1,9 +1,9 @@
 [package]
 name = "glorious-linux"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 description = "Glorious mouse and keyboard software for Linux: Model O3/D3, GMMK 3 HE, firmware updates (GUI + CLI)"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/Virel0/glorious-linux"
 
 [[bin]]

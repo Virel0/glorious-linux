@@ -15,7 +15,7 @@ ask() {
     [[ "$reply" =~ ^[Yy] ]]
 }
 
-rm -f "$PREFIX/bin/glorious" "$DATA/applications/glorious-linux.desktop" "$DATA/icons/hicolor/scalable/apps/glorious-linux.svg"
+rm -f "$PREFIX/bin/glorious" "$DATA/applications/glorious-linux.desktop" "$DATA"/icons/hicolor/*/apps/glorious-linux.*
 echo "Removed glorious, its menu entry and icon."
 
 if [ -x "$PREFIX/bin/inglorious-core" ] && ask "Also remove the keyboard configurator (inglorious-core)?"; then

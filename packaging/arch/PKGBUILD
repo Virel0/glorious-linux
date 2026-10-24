@@ -6,7 +6,7 @@ pkgrel=1
 pkgdesc="Glorious mouse and keyboard software for Linux: Model O3/D3, GMMK 3 HE, firmware updates"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Virel0/glorious-linux"
-license=('MIT')
+license=('GPL-3.0-or-later')
 depends=('gcc-libs' 'glibc' 'systemd-libs' 'hicolor-icon-theme' 'libxkbcommon' 'wayland' 'libglvnd' 'dfu-util')
 makedepends=('cargo' 'git')
 provides=('glorious-linux')
@@ -38,7 +38,9 @@ package() {
   install -Dm755 target/release/glorious "$pkgdir/usr/bin/glorious"
   install -Dm644 packaging/70-glorious-linux.rules "$pkgdir/usr/lib/udev/rules.d/70-glorious-linux.rules"
   install -Dm644 packaging/glorious-linux.desktop "$pkgdir/usr/share/applications/glorious-linux.desktop"
-  install -Dm644 packaging/glorious-linux.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/glorious-linux.svg"
+  for icon in packaging/icons/hicolor/*/apps/glorious-linux.*; do
+    install -Dm644 "$icon" "$pkgdir/usr/share/icons/hicolor/${icon#packaging/icons/hicolor/}"
+  done
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname/fonts" assets/fonts/OFL-*.txt
 }

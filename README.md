@@ -5,6 +5,8 @@ updates without Glorious CORE. One Rust app (GUI + CLI), one installer.
 
 > Unofficial. Not affiliated with or endorsed by Glorious. Use at your own risk.
 
+<p align="center"><img src="packaging/icons/hicolor/128x128/apps/glorious-linux.png" width="96" alt=""></p>
+
 ![Overview](docs/overview.png)
 
 <details>
@@ -143,4 +145,15 @@ No Glorious code, binaries or firmware are included in this repository.
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+Copyright (C) 2026 Virel0
+
+glorious-linux is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of
+the License, or (at your option) any later version. See [LICENSE](LICENSE).
+
+In short: anyone may use, study, change and share it, including commercially - but copies and
+modified versions they distribute must stay under the GPL with their source available, and
+devices that ship it can't be locked against running modified versions.
+
+Releases up to v0.3.0 were published under the MIT license. The keyboard layout table in
+`src/keybed.rs` comes from inglorious-core-linux and keeps its MIT notice.

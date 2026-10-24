@@ -339,7 +339,7 @@ impl App {
 
     fn busy(&self) -> bool {
         match self.tab {
-            Tab::Kb(_) => self.keyboard.busy,
+            Tab::Kb(_) => self.keyboard.busy || !self.keyboard.connected,
             _ => self.mouse_busy || self.flashing,
         }
     }
@@ -512,6 +512,8 @@ impl App {
             ui.add_space(14.0);
             if self.keyboard.connected {
                 device_chip(ui, icon::KEYBOARD, gmmk3he::NAME, "Connected".into(), OK);
+            } else if self.keyboard.connecting() {
+                device_chip(ui, icon::KEYBOARD, "Keyboard", "Connecting...".into(), DIM);
             } else {
                 device_chip(ui, icon::KEYBOARD, "Keyboard", "Not connected".into(), DIM);
             }
@@ -1068,6 +1070,10 @@ pub fn run() -> anyhow::Result<()> {
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_app_id("glorious-linux")
+                .with_icon(std::sync::Arc::new(
+                    eframe::icon_data::from_png_bytes(include_bytes!("../packaging/icons/hicolor/256x256/apps/glorious-linux.png"))
+                        .unwrap_or_default(),
+                ))
                 .with_title("Glorious")
                 .with_inner_size([1120.0, 780.0])
                 .with_min_inner_size([860.0, 600.0]),
