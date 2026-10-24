@@ -6,11 +6,11 @@
 //! keyboard can't report lighting, actuation or keymap back, so - like CORE - the last applied
 //! values live in that library's state file (shared with the inglorious-core app).
 use crate::gmmk3he::Component;
+use crate::kbdevice::{self as device, Command, Event};
 use crate::keybed::{self, Look, BADGE};
 use crate::theme::*;
 use eframe::egui::{self, Color32, RichText, Ui};
 use egui_phosphor::regular as icon;
-use glorious_core_rs::device::{self, Command, Event};
 use glorious_core_rs::protocol::{self as p, Actuation, KeyLight};
 use glorious_core_rs::state::{self, State};
 use glorious_core_rs::tables::{EFFECTS, KEYCODES, MULTICOLOUR, MULTICOLOUR_ONLY, SINGLE_COLOUR};
@@ -19,8 +19,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 pub const LAYERS: [&str; 3] = ["Base", "Fn", "Fn2"];
+#[rustfmt::skip]
 const RATES: [(u16, &str); 7] = [(125, "125"), (250, "250"), (500, "500"), (1000, "1K"), (2000, "2K"), (4000, "4K"), (8000, "8K")];
 const SIDE: std::ops::Range<usize> = 128..158;
+#[rustfmt::skip]
 const PALETTE: [[u8; 3]; 8] = [
     [0xF5, 0xA6, 0x23], [0xFF, 0x3B, 0x30], [0xFF, 0x2D, 0x95], [0xAF, 0x52, 0xDE],
     [0x0A, 0x84, 0xFF], [0x00, 0xC7, 0xBE], [0x34, 0xC7, 0x59], [0xFF, 0xFF, 0xFF],
@@ -58,6 +60,8 @@ pub struct Keyboard {
     per_key_actuation: Actuation,
     live: bool,
     live_value: f32,
+    /// Whether the keyboard's input interface (needed for live travel) could be opened.
+    live_available: bool,
 }
 
 fn json<T: serde::Serialize>(v: &T) -> serde_json::Value {
@@ -80,11 +84,7 @@ pub fn key_display(name: &str) -> String {
 /// Bindable keycodes, one entry per code.
 fn keycodes() -> Vec<(String, u8)> {
     let mut seen = BTreeSet::new();
-    KEYCODES
-        .iter()
-        .filter(|(_, code)| *code != 0 && seen.insert(*code))
-        .map(|(n, c)| (key_display(n), *c))
-        .collect()
+    KEYCODES.iter().filter(|(_, code)| *code != 0 && seen.insert(*code)).map(|(n, c)| (key_display(n), *c)).collect()
 }
 
 fn code_name(code: u8) -> String {
@@ -97,7 +97,7 @@ fn rgb(c: [u8; 3]) -> Color32 {
 
 impl Keyboard {
     pub fn new() -> Keyboard {
-        let (tx, rx, _join) = device::worker(false);
+        let (tx, rx) = device::worker();
         let had_state_file = device::state_path().map(|p| p.exists()).unwrap_or(false);
         let (saved, error) = match device::load_state() {
             Ok(s) => (s, None),
@@ -123,6 +123,7 @@ impl Keyboard {
             per_key_actuation: Actuation::default(),
             live: false,
             live_value: 0.0,
+            live_available: false,
         };
         let _ = kb.tx.send(Command::Info);
         kb
@@ -138,8 +139,9 @@ impl Keyboard {
         let mut toasts = Vec::new();
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                Event::Info { fw, profile, layer, sleep, .. } => {
+                Event::Info { fw, profile, layer, sleep, live_available } => {
                     self.connected = true;
+                    self.live_available = live_available;
                     self.error = None;
                     self.active = (profile, layer);
                     // Follow the board's profile (it can be switched with Fn keys) without writing.
@@ -181,7 +183,6 @@ impl Keyboard {
                     self.error = Some(e);
                 }
                 Event::Live(v) => self.live_value = v,
-                Event::Status(_) => {}
             }
         }
         if !self.busy && self.last_info.elapsed() >= INFO_REFRESH {
@@ -318,7 +319,12 @@ impl Keyboard {
                         ui.label(RichText::new("Connecting to your keyboard...").color(TEXT));
                     } else {
                         ui.label(RichText::new(icon::PLUG).size(16.0).color(WARN));
-                        ui.label(RichText::new("Keyboard not found - plug it in. Showing your saved settings; applying is paused.").color(TEXT));
+                        ui.label(
+                            RichText::new(
+                                "Keyboard not found - plug it in. Showing your saved settings; applying is paused.",
+                            )
+                            .color(TEXT),
+                        );
                     }
                 });
             });
@@ -347,27 +353,34 @@ impl Keyboard {
         });
         self.status_banner(ui);
         let mut switch = None;
-        egui::Frame::new().fill(SURFACE).stroke(egui::Stroke::new(1.0_f32, BORDER)).corner_radius(16).inner_margin(24).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(crate::gmmk3he::NAME).family(heading_family()).size(28.0).color(TEXT));
-            ui.horizontal(|ui| {
-                if self.connected {
-                    pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
-                    pill(ui, icon::USB, "Wired", ACCENT);
-                    pill(ui, "", &format!("{} layer active", LAYERS[self.active.1 as usize % 3]), DIM);
-                } else {
-                    pill(ui, icon::PLUG, "Not connected", DIM);
-                }
+        egui::Frame::new()
+            .fill(SURFACE)
+            .stroke(egui::Stroke::new(1.0_f32, BORDER))
+            .corner_radius(16)
+            .inner_margin(24)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(crate::gmmk3he::NAME).family(heading_family()).size(28.0).color(TEXT));
+                ui.horizontal(|ui| {
+                    if self.connected {
+                        pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
+                        pill(ui, icon::USB, "Wired", ACCENT);
+                        pill(ui, "", &format!("{} layer active", LAYERS[self.active.1 as usize % 3]), DIM);
+                    } else {
+                        pill(ui, icon::PLUG, "Not connected", DIM);
+                    }
+                });
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    row_label(ui, "Profile", "Switches the board immediately");
+                    let mut profile = self.active.0;
+                    if segmented(ui, &mut profile, &[(0, "Profile 1"), (1, "Profile 2"), (2, "Profile 3")])
+                        && !self.busy
+                    {
+                        switch = Some(profile);
+                    }
+                });
             });
-            ui.add_space(14.0);
-            ui.horizontal(|ui| {
-                row_label(ui, "Profile", "Switches the board immediately");
-                let mut profile = self.active.0;
-                if segmented(ui, &mut profile, &[(0, "Profile 1"), (1, "Profile 2"), (2, "Profile 3")]) && !self.busy {
-                    switch = Some(profile);
-                }
-            });
-        });
         if let Some(pr) = switch {
             self.switch_profile(pr);
         }
@@ -521,7 +534,11 @@ impl Keyboard {
                 });
                 if let Some(k) = clicked {
                     let slot = &mut l.colors[k as usize];
-                    *slot = if slot.mode == 1 && slot.rgb == paint { KeyLight { rgb: slot.rgb, mode: 0 } } else { KeyLight { rgb: paint, mode: 1 } };
+                    *slot = if slot.mode == 1 && slot.rgb == paint {
+                        KeyLight { rgb: slot.rgb, mode: 0 }
+                    } else {
+                        KeyLight { rgb: paint, mode: 1 }
+                    };
                 }
                 ui.horizontal(|ui| {
                     if ui.button(format!("{}  Paint every key", icon::PALETTE)).clicked() {
@@ -561,23 +578,29 @@ impl Keyboard {
             if a.rapid {
                 ui.horizontal(|ui| {
                     row_label(ui, "Press sensitivity", "");
-                    ui.add(egui::Slider::new(&mut a.rapid_press, 0.1..=4.0).step_by(0.1).fixed_decimals(1).suffix(" mm"));
+                    ui.add(
+                        egui::Slider::new(&mut a.rapid_press, 0.1..=4.0).step_by(0.1).fixed_decimals(1).suffix(" mm"),
+                    );
                 });
                 ui.horizontal(|ui| {
                     row_label(ui, "Release sensitivity", "");
-                    ui.add(egui::Slider::new(&mut a.rapid_release, 0.1..=4.0).step_by(0.1).fixed_decimals(1).suffix(" mm"));
+                    ui.add(
+                        egui::Slider::new(&mut a.rapid_release, 0.1..=4.0).step_by(0.1).fixed_decimals(1).suffix(" mm"),
+                    );
                 });
             }
             ui.horizontal(|ui| {
                 row_label(ui, "Bottom dead zone", "Ignore travel this close to bottoming out");
                 let mut dz = a.deadzone.unwrap_or(4.0);
-                if ui.add(egui::Slider::new(&mut dz, 0.1..=4.0).step_by(0.1).fixed_decimals(1).suffix(" mm")).changed() {
+                if ui.add(egui::Slider::new(&mut dz, 0.1..=4.0).step_by(0.1).fixed_decimals(1).suffix(" mm")).changed()
+                {
                     a.deadzone = Some(dz);
                 }
             });
         });
         let mut toggle_live = false;
         let live = self.live;
+        let live_available = self.live_available;
         let live_value = self.live_value;
         let selected = self.selected.clone();
         let mut clicked = None;
@@ -585,7 +608,10 @@ impl Keyboard {
         let mut clear_selected = false;
         let pk = &mut self.per_key_actuation;
         card(ui, icon::CROSSHAIR, "Per-key overrides", |ui| {
-            ui.label(RichText::new("Select keys, then give them their own press point - e.g. a light touch for WASD.").color(DIM));
+            ui.label(
+                RichText::new("Select keys, then give them their own press point - e.g. a light touch for WASD.")
+                    .color(DIM),
+            );
             let per_key = layer.per_key.clone();
             clicked = keybed::show(ui, &|k| Look {
                 value: per_key.get(&k).map(|a| format!("{:.1}", a.press)),
@@ -602,12 +628,20 @@ impl Keyboard {
                 row_label(ui, "Rapid trigger", "");
                 toggle(ui, &mut pk.rapid);
                 if pk.rapid {
-                    ui.add(egui::Slider::new(&mut pk.rapid_press, 0.1..=4.0).step_by(0.1).fixed_decimals(1).text("press"));
-                    ui.add(egui::Slider::new(&mut pk.rapid_release, 0.1..=4.0).step_by(0.1).fixed_decimals(1).text("release"));
+                    ui.add(
+                        egui::Slider::new(&mut pk.rapid_press, 0.1..=4.0).step_by(0.1).fixed_decimals(1).text("press"),
+                    );
+                    ui.add(
+                        egui::Slider::new(&mut pk.rapid_release, 0.1..=4.0)
+                            .step_by(0.1)
+                            .fixed_decimals(1)
+                            .text("release"),
+                    );
                 }
             });
             ui.horizontal(|ui| {
-                set_selected = ui.add_enabled(!selected.is_empty(), egui::Button::new("Set for selected keys")).clicked();
+                set_selected =
+                    ui.add_enabled(!selected.is_empty(), egui::Button::new("Set for selected keys")).clicked();
                 clear_selected = ui.add_enabled(!selected.is_empty(), egui::Button::new("Remove override")).clicked();
             });
         });
@@ -630,6 +664,16 @@ impl Keyboard {
             }
         }
         card(ui, icon::WAVEFORM, "Live key travel", |ui| {
+            if !live_available {
+                ui.label(
+                    RichText::new(
+                        "Off for security: live travel reads the keyboard's input interface, which also carries every \
+                     keystroke, so the udev rule doesn't open it to apps. See the README to enable it.",
+                    )
+                    .color(DIM),
+                );
+                return;
+            }
             ui.horizontal(|ui| {
                 row_label(ui, "Show live travel", "Press any key to see how far it moves");
                 let mut on = live;
@@ -638,7 +682,11 @@ impl Keyboard {
                 }
             });
             if live {
-                ui.add(egui::ProgressBar::new(live_value).text(format!("{:.1} mm", live_value * 4.0)).desired_width(ui.available_width()));
+                ui.add(
+                    egui::ProgressBar::new(live_value)
+                        .text(format!("{:.1} mm", live_value * 4.0))
+                        .desired_width(ui.available_width()),
+                );
                 ui.ctx().request_repaint_after(Duration::from_millis(33));
             }
         });
@@ -686,18 +734,21 @@ impl Keyboard {
             ui.horizontal(|ui| {
                 row_label(ui, "Sends", "");
                 let text = current.map_or("-".into(), code_name);
-                egui::ComboBox::from_id_salt("kb-code").selected_text(text).width(220.0).height(360.0).show_ui(ui, |ui| {
-                    for (name, code) in keycodes() {
-                        if ui.selectable_label(current == Some(code), name).clicked() {
-                            layer.advanced.remove(&key);
-                            if state::default_code(key).ok() == Some(code) {
-                                layer.bindings.remove(&key);
-                            } else {
-                                layer.bindings.insert(key, [[0, 0, code, 0], [0; 4], [0; 4], [0; 4]]);
+                egui::ComboBox::from_id_salt("kb-code").selected_text(text).width(220.0).height(360.0).show_ui(
+                    ui,
+                    |ui| {
+                        for (name, code) in keycodes() {
+                            if ui.selectable_label(current == Some(code), name).clicked() {
+                                layer.advanced.remove(&key);
+                                if state::default_code(key).ok() == Some(code) {
+                                    layer.bindings.remove(&key);
+                                } else {
+                                    layer.bindings.insert(key, [[0, 0, code, 0], [0; 4], [0; 4], [0; 4]]);
+                                }
                             }
                         }
-                    }
-                });
+                    },
+                );
                 if ui.button(format!("{}  Default", icon::ARROW_COUNTER_CLOCKWISE)).clicked() {
                     layer.bindings.remove(&key);
                     layer.advanced.remove(&key);

@@ -7,6 +7,7 @@ use crate::theme::*;
 use eframe::egui::{self, Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, Ui};
 use glorious_core_rs::tables::PHYSICAL_KEYS;
 
+#[rustfmt::skip]
 const KEYBED: &[(&str, &str, f32, f32, f32)] = &[
     ("Escape", "Esc", 20., 20., 1.), ("F1", "F1", 90., 20., 1.), ("F2", "F2", 146., 20., 1.), ("F3", "F3", 202., 20., 1.),
     ("F4", "F4", 258., 20., 1.), ("F5", "F5", 328., 20., 1.), ("F6", "F6", 384., 20., 1.), ("F7", "F7", 440., 20., 1.),
@@ -67,7 +68,11 @@ pub struct Look {
 /// Readable text colour on a key fill.
 fn ink(fill: Color32) -> Color32 {
     let l = 0.299 * fill.r() as f32 + 0.587 * fill.g() as f32 + 0.114 * fill.b() as f32;
-    if l > 140.0 { Color32::from_rgb(0x15, 0x15, 0x18) } else { TEXT }
+    if l > 140.0 {
+        Color32::from_rgb(0x15, 0x15, 0x18)
+    } else {
+        TEXT
+    }
 }
 
 /// Draw the board scaled to the available width; returns the clicked key (or BADGE).
@@ -82,7 +87,8 @@ pub fn show(ui: &mut Ui, look: &dyn Fn(u8) -> Look) -> Option<u8> {
     let value_font = FontId::monospace((10.0 * s).max(9.0));
     let mut clicked = None;
     let mut cap = |ui: &mut Ui, r: Rect, idx: u8, text: &str| {
-        let resp = ui.interact(r, ui.id().with(("key", idx)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        let resp =
+            ui.interact(r, ui.id().with(("key", idx)), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         if resp.clicked() {
             clicked = Some(idx);
         }
@@ -99,8 +105,20 @@ pub fn show(ui: &mut Ui, look: &dyn Fn(u8) -> Look) -> Option<u8> {
         let color = l.fill.map_or(TEXT, ink);
         match &l.value {
             Some(v) => {
-                painter.text(r.center() - egui::vec2(0.0, 7.0 * s), Align2::CENTER_CENTER, text, label_font.clone(), color);
-                painter.text(r.center() + egui::vec2(0.0, 9.0 * s), Align2::CENTER_CENTER, v, value_font.clone(), if l.fill.is_some() { color } else { ACCENT });
+                painter.text(
+                    r.center() - egui::vec2(0.0, 7.0 * s),
+                    Align2::CENTER_CENTER,
+                    text,
+                    label_font.clone(),
+                    color,
+                );
+                painter.text(
+                    r.center() + egui::vec2(0.0, 9.0 * s),
+                    Align2::CENTER_CENTER,
+                    v,
+                    value_font.clone(),
+                    if l.fill.is_some() { color } else { ACCENT },
+                );
             }
             None => {
                 painter.text(r.center(), Align2::CENTER_CENTER, text, label_font.clone(), color);

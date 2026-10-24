@@ -1,0 +1,23 @@
+name: Device support request
+description: Ask for (or help add) support for another Glorious device
+labels: [device-support]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      placeholder: e.g. Model O 2 Wireless
+    validations:
+      required: true
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: "`lsusb` line"
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Which features matter most to you, and whether you can test changes.

@@ -64,7 +64,14 @@ pub struct LightingSettings {
 
 impl Default for LightingSettings {
     fn default() -> Self {
-        Self { effect: "rainbow".into(), brightness: 60, wireless_brightness: 60, speed: 50, custom_color: false, color: [255, 136, 0] }
+        Self {
+            effect: "rainbow".into(),
+            brightness: 60,
+            wireless_brightness: 60,
+            speed: 50,
+            custom_color: false,
+            color: [255, 136, 0],
+        }
     }
 }
 
@@ -79,7 +86,14 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let buttons = [("left", "left"), ("right", "right"), ("middle", "middle"), ("forward", "forward"), ("back", "back"), ("dpi", "dpi-up")];
+        let buttons = [
+            ("left", "left"),
+            ("right", "right"),
+            ("middle", "middle"),
+            ("forward", "forward"),
+            ("back", "back"),
+            ("dpi", "dpi-up"),
+        ];
         Self {
             performance: Performance::default(),
             lighting: LightingSettings::default(),

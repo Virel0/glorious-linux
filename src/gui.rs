@@ -12,9 +12,11 @@ use hidapi::HidApi;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+#[rustfmt::skip]
 const POLLING_RATES: [(u16, &str); 7] =
     [(125, "125"), (250, "250"), (500, "500"), (1000, "1K"), (2000, "2K"), (4000, "4K"), (8000, "8K")];
 const LIFT_OFF: [(u8, &str); 3] = [(0, "0.7 mm"), (1, "1.0 mm"), (2, "2.0 mm")];
+#[rustfmt::skip]
 const PRESET_COLORS: [[u8; 3]; 8] = [
     [0xF5, 0xA6, 0x23], [0xFF, 0x3B, 0x30], [0xFF, 0x2D, 0x95], [0xAF, 0x52, 0xDE],
     [0x0A, 0x84, 0xFF], [0x00, 0xC7, 0xBE], [0x34, 0xC7, 0x59], [0xFF, 0xFF, 0xFF],
@@ -38,18 +40,24 @@ type NavEntry = (Tab, &'static str, &'static str);
 
 /// Sidebar sections: (heading, entries).
 const NAV: [(&str, &[NavEntry]); 3] = [
-    ("MOUSE", &[
-        (Tab::Mouse, icon::MOUSE, "Overview"),
-        (Tab::Performance, icon::GAUGE, "Performance"),
-        (Tab::Lighting, icon::LIGHTBULB, "Lighting"),
-        (Tab::Buttons, icon::CURSOR_CLICK, "Buttons"),
-    ]),
-    ("KEYBOARD", &[
-        (Tab::Kb(Page::Home), icon::KEYBOARD, "Keyboard"),
-        (Tab::Kb(Page::Lighting), icon::PALETTE, "Key lighting"),
-        (Tab::Kb(Page::Actuation), icon::SLIDERS, "Actuation"),
-        (Tab::Kb(Page::Keymap), icon::CURSOR_CLICK, "Keymap"),
-    ]),
+    (
+        "MOUSE",
+        &[
+            (Tab::Mouse, icon::MOUSE, "Overview"),
+            (Tab::Performance, icon::GAUGE, "Performance"),
+            (Tab::Lighting, icon::LIGHTBULB, "Lighting"),
+            (Tab::Buttons, icon::CURSOR_CLICK, "Buttons"),
+        ],
+    ),
+    (
+        "KEYBOARD",
+        &[
+            (Tab::Kb(Page::Home), icon::KEYBOARD, "Keyboard"),
+            (Tab::Kb(Page::Lighting), icon::PALETTE, "Key lighting"),
+            (Tab::Kb(Page::Actuation), icon::SLIDERS, "Actuation"),
+            (Tab::Kb(Page::Keymap), icon::CURSOR_CLICK, "Keymap"),
+        ],
+    ),
     ("UPDATES", &[(Tab::Firmware, icon::DOWNLOAD_SIMPLE, "Firmware")]),
 ];
 
@@ -107,6 +115,8 @@ pub struct App {
     fw_dry: bool,
     fw_force: bool,
     fw_confirm: bool,
+    /// The user accepted flashing a bundle whose checksum this version doesn't know.
+    fw_allow_unverified: bool,
     flashing: bool,
     /// Current flash step (number, total, title) and its progress.
     fw_step: Option<(usize, usize, String)>,
@@ -130,12 +140,13 @@ fn pretty(name: &str) -> String {
 
 /// "MOUSE_D3_WIRELESS" -> "Model D3 Wireless"
 fn model_display(raw: &str) -> String {
-    let words: Vec<String> = raw
-        .split('_')
-        .skip(1)
-        .map(|w| if w.len() == 2 { w.to_string() } else { pretty(&w.to_lowercase()) })
-        .collect();
-    if words.is_empty() { raw.to_string() } else { format!("Model {}", words.join(" ")) }
+    let words: Vec<String> =
+        raw.split('_').skip(1).map(|w| if w.len() == 2 { w.to_string() } else { pretty(&w.to_lowercase()) }).collect();
+    if words.is_empty() {
+        raw.to_string()
+    } else {
+        format!("Model {}", words.join(" "))
+    }
 }
 
 /// "ModelD3Wireless" -> "Model D3 Wireless"
@@ -193,7 +204,13 @@ fn lighting_preview(ui: &mut Ui, l: &LightingSettings) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 12.0, PANEL);
     if l.effect == "off" {
-        painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Lighting off", egui::FontId::proportional(14.0), FAINT);
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Lighting off",
+            egui::FontId::proportional(14.0),
+            FAINT,
+        );
         return;
     }
     let t = ui.input(|i| i.time) as f32;
@@ -205,7 +222,9 @@ fn lighting_preview(ui: &mut Ui, l: &LightingSettings) {
         let x = k as f32 / n as f32;
         let (hue, v) = match l.effect.as_str() {
             "solid" => (x, 1.0),
-            "breathing" | "breathing-single" | "seamless-breathing" => (t * 0.05, 0.55 + 0.45 * (t * speed * 2.0).sin()),
+            "breathing" | "breathing-single" | "seamless-breathing" => {
+                (t * 0.05, 0.55 + 0.45 * (t * speed * 2.0).sin())
+            }
             "ripple" => (x * 0.6, 0.5 + 0.5 * ((x - 0.5).abs() * 18.0 - t * speed * 4.0).sin()),
             "fairies" | "ghost" => (x + t * 0.05, ((k as f32 * 7.31 + t * speed * 2.5).sin()).max(0.0).powi(3)),
             _ => (x + t * 0.15 * speed, 1.0),
@@ -217,7 +236,10 @@ fn lighting_preview(ui: &mut Ui, l: &LightingSettings) {
         } else {
             egui::ecolor::Hsva::new(hue.rem_euclid(1.0), 0.85, v, 1.0).into()
         };
-        let strip = egui::Rect::from_min_size(egui::pos2(rect.left() + k as f32 * w, rect.top()), egui::vec2(w + 1.0, rect.height()));
+        let strip = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + k as f32 * w, rect.top()),
+            egui::vec2(w + 1.0, rect.height()),
+        );
         painter.rect_filled(strip, 0.0, color);
     }
     ui.ctx().request_repaint_after(Duration::from_millis(33));
@@ -252,6 +274,7 @@ impl App {
             fw_dry: true,
             fw_force: false,
             fw_confirm: false,
+            fw_allow_unverified: false,
             flashing: false,
             fw_step: None,
             fw_progress: 0.0,
@@ -299,7 +322,9 @@ impl App {
         self.polling_stage = true;
         self.last_stage_poll = Instant::now();
         self.spawn(ctx, |tx, _| {
-            let r = HidApi::new().map_err(anyhow::Error::from).and_then(|api| Mouse::open(&api, false)?.active_stage_fast());
+            let r = HidApi::new()
+                .map_err(anyhow::Error::from)
+                .and_then(|api| Mouse::open(&api, false)?.active_stage_fast());
             let _ = tx.send(Msg::ActiveStage(r.map_err(|e| format!("{e:#}"))));
         });
     }
@@ -325,7 +350,7 @@ impl App {
 
     fn flash(&mut self, ctx: &egui::Context) {
         let Some(st) = self.fw_status.clone() else { return };
-        let (part, force, dry) = (self.fw_part, self.fw_force, self.fw_dry);
+        let (part, force, dry, unverified) = (self.fw_part, self.fw_force, self.fw_dry, self.fw_allow_unverified);
         self.flashing = true;
         self.fw_confirm = false;
         self.fw_log.clear();
@@ -337,7 +362,7 @@ impl App {
                 let _ = tx.send(Msg::Fw(event));
                 ctx.request_repaint();
             };
-            let r = firmware::flash(&st, part, force, dry, &emit);
+            let r = firmware::flash(&st, part, force, dry, unverified, &emit);
             let _ = tx.send(Msg::FwDone(r.map_err(|e| format!("{e:#}"))));
         });
     }
@@ -387,15 +412,27 @@ impl App {
                     self.toast("The active DPI stage must be switched on", false);
                     return;
                 }
-                self.with_mouse(ctx, move |m| settings::apply_performance(m, &p, &prev).map(|_| p), |r| Msg::Applied(r.map(Applied::Performance)));
+                self.with_mouse(
+                    ctx,
+                    move |m| settings::apply_performance(m, &p, &prev).map(|_| p),
+                    |r| Msg::Applied(r.map(Applied::Performance)),
+                );
             }
             Tab::Lighting => {
                 let l = self.draft.lighting.clone();
-                self.with_mouse(ctx, move |m| settings::apply_lighting(m, &l).map(|_| l), |r| Msg::Applied(r.map(Applied::Lighting)));
+                self.with_mouse(
+                    ctx,
+                    move |m| settings::apply_lighting(m, &l).map(|_| l),
+                    |r| Msg::Applied(r.map(Applied::Lighting)),
+                );
             }
             Tab::Buttons => {
                 let b = self.draft.buttons.clone();
-                self.with_mouse(ctx, move |m| settings::apply_buttons(m, &b).map(|_| b), |r| Msg::Applied(r.map(Applied::Buttons)));
+                self.with_mouse(
+                    ctx,
+                    move |m| settings::apply_buttons(m, &b).map(|_| b),
+                    |r| Msg::Applied(r.map(Applied::Buttons)),
+                );
             }
             _ => {}
         }
@@ -508,7 +545,9 @@ impl App {
                 self.flashing = false;
                 self.fw_result = Some(r.is_ok());
                 match r {
-                    Ok(()) => self.toast(if self.fw_dry { "Dry run finished" } else { "Firmware update finished" }, true),
+                    Ok(()) => {
+                        self.toast(if self.fw_dry { "Dry run finished" } else { "Firmware update finished" }, true)
+                    }
                     Err(e) => {
                         self.fw_log.push(format!("ERROR: {e}"));
                         self.toast("Firmware update failed - see the log", false);
@@ -533,7 +572,9 @@ impl App {
             ui.label(RichText::new(icon::MOUSE).size(26.0).color(ACCENT));
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new("Glorious").family(egui::FontFamily::Name("brand".into())).size(21.0).color(TEXT));
+                ui.label(
+                    RichText::new("Glorious").family(egui::FontFamily::Name("brand".into())).size(21.0).color(TEXT),
+                );
                 ui.label(RichText::new("for Linux").size(12.0).color(FAINT));
             });
         });
@@ -566,7 +607,9 @@ impl App {
                     let status = format!("{} {}%", battery_icon(b.level, b.status == "charging"), b.level);
                     device_chip(ui, icon::MOUSE, &model_display(&s.model), status, battery_color(b.level));
                 }
-                (Some(s), _) => device_chip(ui, icon::MOUSE, &model_display(&s.model), format!("{} Asleep", icon::MOON), DIM),
+                (Some(s), _) => {
+                    device_chip(ui, icon::MOUSE, &model_display(&s.model), format!("{} Asleep", icon::MOON), DIM)
+                }
                 (None, _) if self.mouse_busy => {
                     ui.spinner();
                 }
@@ -580,7 +623,9 @@ impl App {
     fn overview_tab(&mut self, ui: &mut Ui) {
         let mut refresh = false;
         page_header(ui, "Overview", "Your mouse at a glance", |ui| {
-            refresh = ui.add_enabled(!self.mouse_busy, egui::Button::new(format!("{}  Refresh", icon::ARROW_CLOCKWISE))).clicked();
+            refresh = ui
+                .add_enabled(!self.mouse_busy, egui::Button::new(format!("{}  Refresh", icon::ARROW_CLOCKWISE)))
+                .clicked();
             if self.mouse_busy {
                 ui.spinner();
             }
@@ -596,10 +641,28 @@ impl App {
             let active = p.stages.get(p.active).map_or(0, |s| s.dpi);
             let enabled = p.stages.iter().filter(|s| s.enabled).count();
             ui.columns(4, |cols| {
-                tile(&mut cols[0], icon::CROSSHAIR, "DPI", &active.to_string(), &format!("stage {} of {enabled}", p.active + 1));
+                tile(
+                    &mut cols[0],
+                    icon::CROSSHAIR,
+                    "DPI",
+                    &active.to_string(),
+                    &format!("stage {} of {enabled}", p.active + 1),
+                );
                 tile(&mut cols[1], icon::PULSE, "Polling", &format!("{} Hz", p.polling_wireless), "wireless");
-                tile(&mut cols[2], icon::LIGHTBULB, "Lighting", &effect_name(s.lighting.effect), &format!("{}% brightness", s.lighting.wireless_brightness));
-                tile(&mut cols[3], icon::MOON, "Sleep", &if s.sleep_minutes == 0 { "Never".into() } else { format!("{} min", s.sleep_minutes) }, "idle timeout");
+                tile(
+                    &mut cols[2],
+                    icon::LIGHTBULB,
+                    "Lighting",
+                    &effect_name(s.lighting.effect),
+                    &format!("{}% brightness", s.lighting.wireless_brightness),
+                );
+                tile(
+                    &mut cols[3],
+                    icon::MOON,
+                    "Sleep",
+                    &if s.sleep_minutes == 0 { "Never".into() } else { format!("{} min", s.sleep_minutes) },
+                    "idle timeout",
+                );
             });
         }
         if refresh {
@@ -609,67 +672,115 @@ impl App {
 
     fn mouse_problem(&self, ui: &mut Ui, state: &MouseState) {
         let (glyph, title, body) = match state {
-            MouseState::Asleep => (icon::MOON, "Your mouse is asleep", "Move it to wake it up - this page reconnects on its own.".to_string()),
-            MouseState::Missing => (icon::PLUG, "No mouse found", "Plug in the receiver or connect the mouse with its USB cable.".to_string()),
-            MouseState::NoPermission => (icon::WARNING, "No permission to talk to the mouse", "Install the udev rule (the installer does this for you), then replug the receiver.".to_string()),
+            MouseState::Asleep => (
+                icon::MOON,
+                "Your mouse is asleep",
+                "Move it to wake it up - this page reconnects on its own.".to_string(),
+            ),
+            MouseState::Missing => (
+                icon::PLUG,
+                "No mouse found",
+                "Plug in the receiver or connect the mouse with its USB cable.".to_string(),
+            ),
+            MouseState::NoPermission => (
+                icon::WARNING,
+                "No permission to talk to the mouse",
+                "Install the udev rule (the installer does this for you), then replug the receiver.".to_string(),
+            ),
             MouseState::Other => (icon::WARNING, "Something went wrong", self.mouse_error.clone().unwrap_or_default()),
             MouseState::Ok => (icon::MOUSE, "Connecting...", "Looking for your mouse.".to_string()),
         };
         if self.snapshot.is_some() && matches!(state, MouseState::Asleep) {
-            info_banner(ui, &format!("{} Your mouse is asleep - showing the last values it reported. Move it to reconnect.", icon::MOON));
+            info_banner(
+                ui,
+                &format!(
+                    "{} Your mouse is asleep - showing the last values it reported. Move it to reconnect.",
+                    icon::MOON
+                ),
+            );
             ui.add_space(14.0);
             return;
         }
-        egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(32).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new(glyph).size(44.0).color(if matches!(state, MouseState::Asleep | MouseState::Ok) { ACCENT } else { WARN }));
-                ui.add_space(6.0);
-                ui.label(RichText::new(title).family(heading_family()).size(20.0).color(TEXT));
-                ui.label(RichText::new(body).color(DIM));
-            });
-        });
+        egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(32).show(
+            ui,
+            |ui| {
+                ui.set_width(ui.available_width());
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new(glyph)
+                            .size(44.0)
+                            .color(if matches!(state, MouseState::Asleep | MouseState::Ok) { ACCENT } else { WARN }),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(title).family(heading_family()).size(20.0).color(TEXT));
+                    ui.label(RichText::new(body).color(DIM));
+                });
+            },
+        );
         ui.add_space(14.0);
     }
 
     fn hero(&self, ui: &mut Ui, s: &Snapshot, live: bool) {
-        egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(16).inner_margin(24).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(model_display(&s.model)).family(heading_family()).size(28.0).color(TEXT));
-                    ui.add_space(4.0);
-                    ui.horizontal_wrapped(|ui| {
-                        if live {
-                            pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
-                        } else {
-                            pill(ui, icon::MOON, "Asleep", DIM);
-                        }
-                        let (glyph, link) = if s.via_receiver { (icon::WIFI_HIGH, "Wireless") } else { (icon::USB, "USB cable") };
-                        pill(ui, glyph, link, ACCENT);
-                        pill(ui, "", &s.color, DIM);
-                    });
-                    ui.add_space(14.0);
-                    egui::Grid::new("hero").num_columns(2).spacing([28.0, 6.0]).show(ui, |ui| {
-                        ui.label(RichText::new("Mouse firmware").color(FAINT));
-                        ui.label(RichText::new(&s.firmware).color(TEXT));
-                        ui.end_row();
-                        if let Some([a, b]) = &s.receiver_firmware {
-                            ui.label(RichText::new("Receiver firmware").color(FAINT));
-                            ui.label(RichText::new(format!("{a}  /  {b}")).color(TEXT));
+        egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(16).inner_margin(24).show(
+            ui,
+            |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(model_display(&s.model)).family(heading_family()).size(28.0).color(TEXT),
+                        );
+                        ui.add_space(4.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if live {
+                                pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
+                            } else {
+                                pill(ui, icon::MOON, "Asleep", DIM);
+                            }
+                            let (glyph, link) =
+                                if s.via_receiver { (icon::WIFI_HIGH, "Wireless") } else { (icon::USB, "USB cable") };
+                            pill(ui, glyph, link, ACCENT);
+                            pill(ui, "", &s.color, DIM);
+                        });
+                        ui.add_space(14.0);
+                        egui::Grid::new("hero").num_columns(2).spacing([28.0, 6.0]).show(ui, |ui| {
+                            ui.label(RichText::new("Mouse firmware").color(FAINT));
+                            ui.label(RichText::new(&s.firmware).color(TEXT));
                             ui.end_row();
-                        }
+                            if let Some([a, b]) = &s.receiver_firmware {
+                                ui.label(RichText::new("Receiver firmware").color(FAINT));
+                                ui.label(RichText::new(format!("{a}  /  {b}")).color(TEXT));
+                                ui.end_row();
+                            }
+                        });
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let b = &s.battery;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(150.0, 160.0),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ring(
+                                    ui,
+                                    b.level as f32 / 100.0,
+                                    118.0,
+                                    &format!("{}%", b.level),
+                                    battery_color(b.level),
+                                );
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} {}",
+                                        battery_icon(b.level, b.status == "charging"),
+                                        pretty(b.status)
+                                    ))
+                                    .color(DIM),
+                                );
+                            },
+                        );
                     });
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let b = &s.battery;
-                    ui.allocate_ui_with_layout(egui::vec2(150.0, 160.0), egui::Layout::top_down(egui::Align::Center), |ui| {
-                        ring(ui, b.level as f32 / 100.0, 118.0, &format!("{}%", b.level), battery_color(b.level));
-                        ui.label(RichText::new(format!("{} {}", battery_icon(b.level, b.status == "charging"), pretty(b.status))).color(DIM));
-                    });
-                });
-            });
-        });
+            },
+        );
     }
 
     fn performance_tab(&mut self, ui: &mut Ui) {
@@ -686,38 +797,58 @@ impl App {
         }
         let p = &mut self.draft.performance;
         card(ui, icon::CROSSHAIR, "DPI stages", |ui| {
-            ui.label(RichText::new("The DPI button cycles through the stages that are switched on. Click a stage's value to type it.").color(DIM));
+            ui.label(
+                RichText::new(
+                    "The DPI button cycles through the stages that are switched on. Click a stage's value to type it.",
+                )
+                .color(DIM),
+            );
             ui.add_space(6.0);
             let per_row = ((ui.available_width() + 12.0) / (148.0 + 12.0)).floor().max(1.0) as usize;
             let active_now = p.active;
             let mut make_active = None;
             for (row, chunk) in p.stages.chunks_mut(per_row).enumerate() {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
-                for (j, s) in chunk.iter_mut().enumerate() {
-                    let i = row * per_row + j;
-                    let active = active_now == i;
-                    let stroke = if active { Stroke::new(2.0_f32, ACCENT) } else { Stroke::new(1.0_f32, BORDER) };
-                    egui::Frame::new().fill(SURFACE2).stroke(stroke).corner_radius(12).inner_margin(12).show(ui, |ui| {
-                        ui.set_width(124.0);
-                        ui.vertical(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.add_enabled_ui(s.enabled, |ui| ui.color_edit_button_srgb(&mut s.color));
-                            ui.label(RichText::new(format!("Stage {}", i + 1)).color(if s.enabled { TEXT } else { FAINT }));
-                        });
-                        ui.add_enabled(s.enabled, egui::DragValue::new(&mut s.dpi).range(50..=26000).speed(10.0).suffix(" DPI"));
-                        ui.horizontal(|ui| {
-                            toggle(ui, &mut s.enabled);
-                            if active {
-                                ui.label(RichText::new("Active").size(12.5).color(ACCENT));
-                            } else if s.enabled && ui.small_button("Use").on_hover_text("Make this the active stage").clicked() {
-                                make_active = Some(i);
-                            }
-                        });
-                        });
-                    });
-                }
-            });
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+                    for (j, s) in chunk.iter_mut().enumerate() {
+                        let i = row * per_row + j;
+                        let active = active_now == i;
+                        let stroke = if active { Stroke::new(2.0_f32, ACCENT) } else { Stroke::new(1.0_f32, BORDER) };
+                        egui::Frame::new().fill(SURFACE2).stroke(stroke).corner_radius(12).inner_margin(12).show(
+                            ui,
+                            |ui| {
+                                ui.set_width(124.0);
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.add_enabled_ui(s.enabled, |ui| ui.color_edit_button_srgb(&mut s.color));
+                                        ui.label(RichText::new(format!("Stage {}", i + 1)).color(if s.enabled {
+                                            TEXT
+                                        } else {
+                                            FAINT
+                                        }));
+                                    });
+                                    ui.add_enabled(
+                                        s.enabled,
+                                        egui::DragValue::new(&mut s.dpi).range(50..=26000).speed(10.0).suffix(" DPI"),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        toggle(ui, &mut s.enabled);
+                                        if active {
+                                            ui.label(RichText::new("Active").size(12.5).color(ACCENT));
+                                        } else if s.enabled
+                                            && ui
+                                                .small_button("Use")
+                                                .on_hover_text("Make this the active stage")
+                                                .clicked()
+                                        {
+                                            make_active = Some(i);
+                                        }
+                                    });
+                                });
+                            },
+                        );
+                    }
+                });
             }
             if let Some(i) = make_active {
                 p.active = i;
@@ -753,7 +884,11 @@ impl App {
         });
         card(ui, icon::MOON, "Power saving", |ui| {
             ui.horizontal(|ui| {
-                row_label(ui, "Sleep after", if p.sleep_minutes == 0 { "Never sleeps" } else { "Minutes without movement" });
+                row_label(
+                    ui,
+                    "Sleep after",
+                    if p.sleep_minutes == 0 { "Never sleeps" } else { "Minutes without movement" },
+                );
                 ui.add(egui::Slider::new(&mut p.sleep_minutes, 0..=60).suffix(" min"));
             });
         });
@@ -766,17 +901,22 @@ impl App {
         }
         page_header(ui, "Lighting", "Effect, brightness and colour", |_| {});
         let l = &mut self.draft.lighting;
-        egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(12).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            lighting_preview(ui, l);
-        });
+        egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(12).show(
+            ui,
+            |ui| {
+                ui.set_width(ui.available_width());
+                lighting_preview(ui, l);
+            },
+        );
         ui.add_space(14.0);
         card(ui, icon::SPARKLE, "Effect", |ui| {
             egui::Grid::new("effects").num_columns(4).spacing([8.0, 8.0]).show(ui, |ui| {
                 for (k, (name, _)) in EFFECTS.iter().enumerate() {
                     let selected = l.effect == *name;
                     let text = RichText::new(pretty(name)).color(if selected { ON_ACCENT } else { TEXT });
-                    let button = egui::Button::new(text).fill(if selected { ACCENT } else { SURFACE2 }).min_size(egui::vec2(150.0, 36.0));
+                    let button = egui::Button::new(text)
+                        .fill(if selected { ACCENT } else { SURFACE2 })
+                        .min_size(egui::vec2(150.0, 36.0));
                     if ui.add(button).clicked() {
                         l.effect = name.to_string();
                     }
@@ -836,33 +976,52 @@ impl App {
         let buttons = &mut self.draft.buttons;
         card(ui, icon::CURSOR_CLICK, "Assignments", |ui| {
             for (button, action) in buttons.iter_mut() {
-                egui::Frame::new().fill(SURFACE2).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 8)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let name = if button == "dpi" { "DPI button".to_string() } else { format!("{} button", pretty(button)) };
-                        ui.add_sized([170.0, 30.0], egui::Label::new(RichText::new(name).color(TEXT)));
-                        let is_key = action.starts_with("key:");
-                        let label = if is_key { format!("{}  Keyboard key", icon::KEYBOARD) } else { pretty(action) };
-                        egui::ComboBox::from_id_salt(format!("act-{button}")).selected_text(label).width(190.0).show_ui(ui, |ui| {
-                            for (name, ..) in FUNCTIONS {
-                                ui.selectable_value(action, name.to_string(), pretty(name));
-                            }
-                            ui.separator();
-                            if ui.selectable_label(is_key, format!("{}  Keyboard key", icon::KEYBOARD)).clicked() && !is_key {
-                                *action = "key:a".into();
+                egui::Frame::new().fill(SURFACE2).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 8)).show(
+                    ui,
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let name = if button == "dpi" {
+                                "DPI button".to_string()
+                            } else {
+                                format!("{} button", pretty(button))
+                            };
+                            ui.add_sized([170.0, 30.0], egui::Label::new(RichText::new(name).color(TEXT)));
+                            let is_key = action.starts_with("key:");
+                            let label =
+                                if is_key { format!("{}  Keyboard key", icon::KEYBOARD) } else { pretty(action) };
+                            egui::ComboBox::from_id_salt(format!("act-{button}"))
+                                .selected_text(label)
+                                .width(190.0)
+                                .show_ui(ui, |ui| {
+                                    for (name, ..) in FUNCTIONS {
+                                        ui.selectable_value(action, name.to_string(), pretty(name));
+                                    }
+                                    ui.separator();
+                                    if ui
+                                        .selectable_label(is_key, format!("{}  Keyboard key", icon::KEYBOARD))
+                                        .clicked()
+                                        && !is_key
+                                    {
+                                        *action = "key:a".into();
+                                    }
+                                });
+                            if let Some(key) = action.strip_prefix("key:").map(str::to_string) {
+                                egui::ComboBox::from_id_salt(format!("key-{button}"))
+                                    .selected_text(key.to_uppercase())
+                                    .width(110.0)
+                                    .height(320.0)
+                                    .show_ui(ui, |ui| {
+                                        for (name, _) in keys {
+                                            if ui.selectable_label(*name == key, name.to_uppercase()).clicked() {
+                                                *action = format!("key:{name}");
+                                            }
+                                        }
+                                    });
                             }
                         });
-                        if let Some(key) = action.strip_prefix("key:").map(str::to_string) {
-                            egui::ComboBox::from_id_salt(format!("key-{button}")).selected_text(key.to_uppercase()).width(110.0).height(320.0).show_ui(ui, |ui| {
-                                for (name, _) in keys {
-                                    if ui.selectable_label(*name == key, name.to_uppercase()).clicked() {
-                                        *action = format!("key:{name}");
-                                    }
-                                }
-                            });
-                        }
-                    });
-                });
+                    },
+                );
                 ui.add_space(2.0);
             }
         });
@@ -872,7 +1031,13 @@ impl App {
     fn flash_progress(&self, ui: &mut Ui) {
         let title = match (self.flashing, self.fw_result) {
             (true, _) => "Updating - keep everything plugged in",
-            (false, Some(true)) => if self.fw_dry { "Dry run finished" } else { "Update finished" },
+            (false, Some(true)) => {
+                if self.fw_dry {
+                    "Dry run finished"
+                } else {
+                    "Update finished"
+                }
+            }
             _ => "Update stopped",
         };
         card(ui, icon::DOWNLOAD_SIMPLE, title, |ui| {
@@ -886,7 +1051,11 @@ impl App {
                         }
                     });
                     let p = if self.fw_result == Some(true) && *n == *of { 1.0 } else { self.fw_progress };
-                    ui.add(egui::ProgressBar::new(p).text(format!("{:.0}%", p * 100.0)).desired_width(ui.available_width()));
+                    ui.add(
+                        egui::ProgressBar::new(p)
+                            .text(format!("{:.0}%", p * 100.0))
+                            .desired_width(ui.available_width()),
+                    );
                     let overall = ((*n - 1) as f32 + p) / *of as f32;
                     ui.add(egui::ProgressBar::new(overall).desired_height(6.0).desired_width(ui.available_width()));
                 }
@@ -900,10 +1069,22 @@ impl App {
             }
             match self.fw_result {
                 Some(true) if !self.fw_dry => {
-                    ui.label(RichText::new(format!("{} Done. Press \"Check again\" to confirm the new versions.", icon::CHECK_CIRCLE)).color(OK));
+                    ui.label(
+                        RichText::new(format!(
+                            "{} Done. Press \"Check again\" to confirm the new versions.",
+                            icon::CHECK_CIRCLE
+                        ))
+                        .color(OK),
+                    );
                 }
                 Some(false) => {
-                    ui.label(RichText::new(format!("{} Stopped - see the log. A device left in its bootloader is safe; run the update again.", icon::WARNING)).color(ERR));
+                    ui.label(
+                        RichText::new(format!(
+                            "{} Stopped - see the log. A device left in its bootloader is safe; run the update again.",
+                            icon::WARNING
+                        ))
+                        .color(ERR),
+                    );
                 }
                 _ => {}
             }
@@ -913,7 +1094,12 @@ impl App {
     fn firmware_tab(&mut self, ui: &mut Ui) {
         let mut check = false;
         page_header(ui, "Firmware", "Updates from Glorious for your mouse, receiver and keyboard", |ui| {
-            check = ui.add_enabled(!self.fw_busy && !self.flashing, egui::Button::new(format!("{}  Check again", icon::ARROW_CLOCKWISE))).clicked();
+            check = ui
+                .add_enabled(
+                    !self.fw_busy && !self.flashing,
+                    egui::Button::new(format!("{}  Check again", icon::ARROW_CLOCKWISE)),
+                )
+                .clicked();
             if self.fw_busy {
                 ui.spinner();
             }
@@ -926,15 +1112,21 @@ impl App {
         if let Some(st) = &self.fw_status {
             card(ui, icon::CPU, &format!("{}  -  {}", product_display(st.product), st.color), |ui| {
                 let row = |ui: &mut Ui, name: &str, have: String, latest: String, outdated: bool| {
-                    egui::Frame::new().fill(SURFACE2).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            ui.add_sized([120.0, 24.0], egui::Label::new(RichText::new(name).color(TEXT)));
-                            ui.label(RichText::new(format!("installed {have}")).color(DIM));
-                            ui.label(RichText::new(format!("latest {latest}")).color(FAINT));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| status_pill(ui, outdated));
+                    egui::Frame::new()
+                        .fill(SURFACE2)
+                        .corner_radius(10)
+                        .inner_margin(egui::Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.add_sized([120.0, 24.0], egui::Label::new(RichText::new(name).color(TEXT)));
+                                ui.label(RichText::new(format!("installed {have}")).color(DIM));
+                                ui.label(RichText::new(format!("latest {latest}")).color(FAINT));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    status_pill(ui, outdated)
+                                });
+                            });
                         });
-                    });
                 };
                 row(ui, "Mouse", st.mouse.clone(), st.latest_mouse.clone(), st.mouse_outdated());
                 if let Some(r) = &st.receiver {
@@ -944,7 +1136,11 @@ impl App {
             card(ui, icon::DOWNLOAD_SIMPLE, "Update", |ui| {
                 ui.horizontal(|ui| {
                     row_label(ui, "What to update", "");
-                    segmented(ui, &mut self.fw_part, &[(Part::All, "Everything"), (Part::Mouse, "Mouse"), (Part::Receiver, "Receiver")]);
+                    segmented(
+                        ui,
+                        &mut self.fw_part,
+                        &[(Part::All, "Everything"), (Part::Mouse, "Mouse"), (Part::Receiver, "Receiver")],
+                    );
                 });
                 ui.horizontal(|ui| {
                     row_label(ui, "Dry run", "Show every step without sending anything");
@@ -959,11 +1155,19 @@ impl App {
                     ui.horizontal(|ui| {
                         row_label(ui, "Connected", "");
                         if m {
-                            let (glyph, text, color) = if self.fw_cabled { (icon::CHECK_CIRCLE, "Mouse cable plugged in", OK) } else { (icon::USB, "Mouse cable not plugged in", WARN) };
+                            let (glyph, text, color) = if self.fw_cabled {
+                                (icon::CHECK_CIRCLE, "Mouse cable plugged in", OK)
+                            } else {
+                                (icon::USB, "Mouse cable not plugged in", WARN)
+                            };
                             pill(ui, glyph, text, color);
                         }
                         if r {
-                            let (glyph, text, color) = if self.fw_receiver { (icon::CHECK_CIRCLE, "Receiver plugged in", OK) } else { (icon::PLUG, "Receiver not plugged in", WARN) };
+                            let (glyph, text, color) = if self.fw_receiver {
+                                (icon::CHECK_CIRCLE, "Receiver plugged in", OK)
+                            } else {
+                                (icon::PLUG, "Receiver not plugged in", WARN)
+                            };
                             pill(ui, glyph, text, color);
                         }
                     });
@@ -974,7 +1178,10 @@ impl App {
                 } else if self.fw_dry {
                     None
                 } else if m && !self.fw_cabled {
-                    Some(format!("{} Plug the USB cable into the mouse - mouse updates only run over the cable.", icon::USB))
+                    Some(format!(
+                        "{} Plug the USB cable into the mouse - mouse updates only run over the cable.",
+                        icon::USB
+                    ))
                 } else if r && !self.fw_receiver {
                     Some(format!("{} Plug in the wireless receiver to update it.", icon::PLUG))
                 } else if r && !self.fw_missing.is_empty() {
@@ -985,16 +1192,36 @@ impl App {
                 if let (Some(b), true) = (&blocker, m || r) {
                     info_banner(ui, b);
                 }
+                let unverified = !st.bundle_verified() && (m || r) && !self.fw_dry;
+                if unverified && blocker.is_none() {
+                    info_banner(ui, &format!(
+                        "{} This firmware is newer than this version of glorious-linux knows, so its checksum can't be checked. \
+                         Updating glorious-linux is the safer option.",
+                        icon::WARNING
+                    ));
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.fw_allow_unverified, "");
+                        ui.label(RichText::new("Flash the unverified firmware anyway").color(TEXT));
+                    });
+                }
                 if !self.fw_dry && blocker.is_none() {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut self.fw_confirm, "");
-                        ui.label(RichText::new("I'll keep the mouse and receiver plugged in until this finishes").color(TEXT));
+                        ui.label(
+                            RichText::new("I'll keep the mouse and receiver plugged in until this finishes")
+                                .color(TEXT),
+                        );
                     });
                 }
                 ui.add_space(4.0);
-                let ready = blocker.is_none() && (self.fw_dry || self.fw_confirm);
+                let ready =
+                    blocker.is_none() && (self.fw_dry || self.fw_confirm) && (!unverified || self.fw_allow_unverified);
                 ui.horizontal(|ui| {
-                    flash = primary(ui, ready && !self.flashing && !self.mouse_busy, if self.fw_dry { "Run dry run" } else { "Update firmware" });
+                    flash = primary(
+                        ui,
+                        ready && !self.flashing && !self.mouse_busy,
+                        if self.fw_dry { "Run dry run" } else { "Update firmware" },
+                    );
                     if !(m || r) {
                         ui.label(RichText::new("Everything is up to date - nothing to flash.").color(DIM));
                     }
@@ -1012,16 +1239,26 @@ impl App {
         if let Some(components) = &self.keyboard.components {
             card(ui, icon::KEYBOARD, gmmk3he::NAME, |ui| {
                 for c in components {
-                    egui::Frame::new().fill(SURFACE2).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let name = match c.name { "device" => "Main firmware", "rf" => "Wireless chip", _ => "Lighting chip" };
-                            ui.add_sized([140.0, 24.0], egui::Label::new(RichText::new(name).color(TEXT)));
-                            ui.label(RichText::new(format!("installed {:04x}", c.installed)).color(DIM));
-                            ui.label(RichText::new(format!("latest {}", c.latest_display())).color(FAINT));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| status_pill(ui, c.outdated()));
+                    egui::Frame::new()
+                        .fill(SURFACE2)
+                        .corner_radius(10)
+                        .inner_margin(egui::Margin::symmetric(14, 10))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                let name = match c.name {
+                                    "device" => "Main firmware",
+                                    "rf" => "Wireless chip",
+                                    _ => "Lighting chip",
+                                };
+                                ui.add_sized([140.0, 24.0], egui::Label::new(RichText::new(name).color(TEXT)));
+                                ui.label(RichText::new(format!("installed {:04x}", c.installed)).color(DIM));
+                                ui.label(RichText::new(format!("latest {}", c.latest_display())).color(FAINT));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    status_pill(ui, c.outdated())
+                                });
+                            });
                         });
-                    });
                 }
                 if components.iter().any(|c| c.outdated()) {
                     ui.label(RichText::new("Keyboard updates still need Glorious CORE on Windows.").color(DIM));
@@ -1034,7 +1271,13 @@ impl App {
                     ui.set_width(ui.available_width());
                     egui::ScrollArea::vertical().max_height(280.0).stick_to_bottom(true).show(ui, |ui| {
                         for line in &self.fw_log {
-                            let color = if line.starts_with("ERROR") { ERR } else if line.starts_with('[') { ACCENT } else { DIM };
+                            let color = if line.starts_with("ERROR") {
+                                ERR
+                            } else if line.starts_with('[') {
+                                ACCENT
+                            } else {
+                                DIM
+                            };
                             ui.label(RichText::new(line).monospace().color(color));
                         }
                     });
@@ -1081,8 +1324,13 @@ impl eframe::App for App {
             self.refresh_mouse(ctx);
         }
         let live_tab = matches!(self.tab, Tab::Mouse | Tab::Performance);
-        if live_tab && self.settings_loaded && self.mouse_error.is_none() && !self.mouse_busy && !self.flashing
-            && !self.polling_stage && self.last_stage_poll.elapsed() >= STAGE_POLL
+        if live_tab
+            && self.settings_loaded
+            && self.mouse_error.is_none()
+            && !self.mouse_busy
+            && !self.flashing
+            && !self.polling_stage
+            && self.last_stage_poll.elapsed() >= STAGE_POLL
         {
             self.poll_stage(ctx);
         }
@@ -1090,7 +1338,11 @@ impl eframe::App for App {
         if self.tab == Tab::Firmware && self.fw_status.is_none() && self.fw_error.is_none() && !self.fw_busy {
             self.check_firmware(ctx);
         }
-        if self.tab == Tab::Firmware && !self.flashing && !self.fw_conn_checking && self.fw_last_conn.elapsed() >= Duration::from_millis(1500) {
+        if self.tab == Tab::Firmware
+            && !self.flashing
+            && !self.fw_conn_checking
+            && self.fw_last_conn.elapsed() >= Duration::from_millis(1500)
+        {
             self.check_connections(ctx);
         }
         if self.dirty() && !self.busy() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
@@ -1105,19 +1357,28 @@ impl eframe::App for App {
 
         if self.dirty() {
             egui::TopBottomPanel::bottom("savebar")
-                .frame(egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).inner_margin(egui::Margin::symmetric(24, 12)))
+                .frame(
+                    egui::Frame::new()
+                        .fill(SURFACE)
+                        .stroke(Stroke::new(1.0_f32, BORDER))
+                        .inner_margin(egui::Margin::symmetric(24, 12)),
+                )
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icon::PENCIL_SIMPLE).size(16.0).color(ACCENT));
                         ui.label(RichText::new("Unsaved changes").color(TEXT));
                         ui.label(RichText::new("Ctrl+S").size(12.0).color(FAINT));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let target = if matches!(self.tab, Tab::Kb(_)) { "Apply to keyboard" } else { "Apply to mouse" };
+                            let target =
+                                if matches!(self.tab, Tab::Kb(_)) { "Apply to keyboard" } else { "Apply to mouse" };
                             let busy = self.busy();
                             if primary(ui, !busy, target) {
                                 self.apply(ctx);
                             }
-                            if ui.add_enabled(!busy, egui::Button::new("Revert").min_size(egui::vec2(90.0, 34.0))).clicked() {
+                            if ui
+                                .add_enabled(!busy, egui::Button::new("Revert").min_size(egui::vec2(90.0, 34.0)))
+                                .clicked()
+                            {
                                 self.revert();
                             }
                             if let (Tab::Kb(_), Some((i, n))) = (self.tab, self.keyboard.progress()) {
@@ -1183,8 +1444,10 @@ pub fn run() -> anyhow::Result<()> {
             viewport: egui::ViewportBuilder::default()
                 .with_app_id("io.github.virel0.GloriousLinux")
                 .with_icon(std::sync::Arc::new(
-                    eframe::icon_data::from_png_bytes(include_bytes!("../packaging/icons/hicolor/256x256/apps/io.github.virel0.GloriousLinux.png"))
-                        .unwrap_or_default(),
+                    eframe::icon_data::from_png_bytes(include_bytes!(
+                        "../packaging/icons/hicolor/256x256/apps/io.github.virel0.GloriousLinux.png"
+                    ))
+                    .unwrap_or_default(),
                 ))
                 .with_title("Glorious")
                 .with_inner_size([1120.0, 780.0])

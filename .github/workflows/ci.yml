@@ -3,13 +3,29 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: '17 6 * * 1' # weekly, to catch new advisories against the locked dependencies
+permissions:
+  contents: read
 jobs:
   check:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
-      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
-      - run: cargo clippy --release --locked -- -D warnings
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - run: cargo fmt --check
+      - run: cargo clippy --release --locked --all-targets -- -D warnings
       - run: cargo test --release --locked
       - run: bash -n install.sh uninstall.sh
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit

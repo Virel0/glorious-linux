@@ -2,8 +2,8 @@
 //! implements the keyboard protocol ("Magneton" in Glorious CORE 2.1.23); this module only
 //! compares the firmware it reports with Glorious' release manifest.
 use crate::firmware;
+use crate::kbdevice as device;
 use anyhow::{anyhow, Result};
-use glorious_core_rs::device;
 
 /// The configurator library supports the 75% ANSI board.
 pub const NAME: &str = "GMMK 3 HE 75% ANSI";
@@ -33,7 +33,9 @@ pub fn compare(fw: &str) -> Result<Vec<Component>> {
     let manifest = firmware::manifest()?;
     let entry = manifest["Keyboard"].as_array().and_then(|a| a.iter().find(|e| e["productId"] == PRODUCT));
     let mut out = Vec::new();
-    for (name, prefix, key) in [("device", "KBv", "version_device"), ("rf", "RFv", "version_rf"), ("led", "LEDv", "version_led")] {
+    for (name, prefix, key) in
+        [("device", "KBv", "version_device"), ("rf", "RFv", "version_rf"), ("led", "LEDv", "version_led")]
+    {
         let installed = fw
             .split(" / ")
             .find_map(|part| part.strip_prefix(prefix))
@@ -46,7 +48,7 @@ pub fn compare(fw: &str) -> Result<Vec<Component>> {
 }
 
 pub fn cli() -> Result<()> {
-    let transport = device::Transport::open(false)?;
+    let transport = device::Transport::open()?;
     let device::Event::Info { fw, profile, layer, sleep, .. } = device::info(&transport)? else {
         return Err(anyhow!("unexpected reply from the keyboard"));
     };

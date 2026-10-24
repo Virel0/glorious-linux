@@ -380,8 +380,19 @@ mod tests {
     impl FakeBootloader {
         fn new(mtu: u16, max_data: usize) -> Self {
             FakeBootloader {
-                inbox: Vec::new(), outbox: VecDeque::new(), prn: 0, since_prn: 0, mtu, max_data, object: Vec::new(),
-                object_size: 0, object_kind: 0, init: Vec::new(), image: Vec::new(), executed_objects: 0, corrupt_after: None,
+                inbox: Vec::new(),
+                outbox: VecDeque::new(),
+                prn: 0,
+                since_prn: 0,
+                mtu,
+                max_data,
+                object: Vec::new(),
+                object_size: 0,
+                object_kind: 0,
+                init: Vec::new(),
+                image: Vec::new(),
+                executed_objects: 0,
+                corrupt_after: None,
             }
         }
         fn reply(&mut self, op: u8, data: &[u8]) {

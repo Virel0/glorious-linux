@@ -105,12 +105,9 @@ pub fn install(ctx: &egui::Context) {
 
 /// A titled card with an icon.
 pub fn card(ui: &mut Ui, icon: &str, title: &str, add: impl FnOnce(&mut Ui)) {
-    egui::Frame::new()
-        .fill(SURFACE)
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .corner_radius(14)
-        .inner_margin(20)
-        .show(ui, |ui| {
+    egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(20).show(
+        ui,
+        |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(RichText::new(icon).size(18.0).color(ACCENT));
@@ -118,7 +115,8 @@ pub fn card(ui: &mut Ui, icon: &str, title: &str, add: impl FnOnce(&mut Ui)) {
             });
             ui.add_space(10.0);
             add(ui);
-        });
+        },
+    );
     ui.add_space(14.0);
 }
 
@@ -173,8 +171,20 @@ pub fn nav_item(ui: &mut Ui, icon: &str, label: &str, selected: bool) -> Respons
         painter.rect_filled(bar, 2.0, ACCENT);
     }
     let color = if selected { TEXT } else { DIM };
-    painter.text(rect.left_center() + egui::vec2(16.0, 0.0), Align2::LEFT_CENTER, icon, FontId::proportional(18.0), if selected { ACCENT } else { color });
-    painter.text(rect.left_center() + egui::vec2(46.0, 0.0), Align2::LEFT_CENTER, label, FontId::new(15.0, FontFamily::Proportional), color);
+    painter.text(
+        rect.left_center() + egui::vec2(16.0, 0.0),
+        Align2::LEFT_CENTER,
+        icon,
+        FontId::proportional(18.0),
+        if selected { ACCENT } else { color },
+    );
+    painter.text(
+        rect.left_center() + egui::vec2(46.0, 0.0),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::new(15.0, FontFamily::Proportional),
+        color,
+    );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -203,7 +213,8 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         for (v, label) in options {
             let selected = *value == *v;
             let text = RichText::new(*label).color(if selected { ON_ACCENT } else { TEXT });
-            let button = egui::Button::new(text).fill(if selected { ACCENT } else { SURFACE2 }).min_size(egui::vec2(56.0, 30.0));
+            let button =
+                egui::Button::new(text).fill(if selected { ACCENT } else { SURFACE2 }).min_size(egui::vec2(56.0, 30.0));
             if ui.add(button).clicked() {
                 *value = *v;
             }
@@ -254,15 +265,18 @@ pub fn ring(ui: &mut Ui, fraction: f32, size: f32, center_text: &str, color: Col
 
 /// Stat tile used on the overview.
 pub fn tile(ui: &mut Ui, icon: &str, label: &str, value: &str, sub: &str) {
-    egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(16).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(icon).size(16.0).color(ACCENT));
-            ui.label(RichText::new(label).size(12.5).color(DIM));
-        });
-        ui.label(RichText::new(value).family(heading_family()).size(22.0).color(TEXT));
-        ui.label(RichText::new(sub).size(12.0).color(FAINT));
-    });
+    egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(16).show(
+        ui,
+        |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(icon).size(16.0).color(ACCENT));
+                ui.label(RichText::new(label).size(12.5).color(DIM));
+            });
+            ui.label(RichText::new(value).family(heading_family()).size(22.0).color(TEXT));
+            ui.label(RichText::new(sub).size(12.0).color(FAINT));
+        },
+    );
 }
 
 /// A clickable colour dot.

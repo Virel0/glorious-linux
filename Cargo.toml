@@ -1,6 +1,6 @@
 [package]
 name = "glorious-linux"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 description = "Glorious mouse and keyboard software for Linux: Model O3/D3, GMMK 3 HE, firmware updates (GUI + CLI)"
 license = "GPL-3.0-or-later"
@@ -16,9 +16,11 @@ clap = { version = "4", features = ["derive"] }
 hidapi = { version = "2", default-features = false, features = ["linux-native"] }
 serde_json = "1"
 ureq = { version = "2", features = ["json"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 serialport = { version = "4", default-features = false }
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tempfile = "3"
 eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 egui-phosphor = "0.11"
 # Keyboard protocol, state and device worker (MIT), pinned to the commit checked against Glorious CORE.

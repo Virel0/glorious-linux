@@ -1,84 +1,109 @@
-# glorious-linux
+<div align="center">
 
-Glorious mouse and keyboard software for Linux - settings, lighting, keymaps and firmware
-updates without Glorious CORE. One Rust app (GUI + CLI), one installer.
+<img src="packaging/icons/hicolor/128x128/apps/io.github.virel0.GloriousLinux.png" width="112" alt="Glorious for Linux logo">
 
-> Unofficial. Not affiliated with or endorsed by Glorious. Use at your own risk.
+# Glorious for Linux
 
-<p align="center"><img src="packaging/icons/hicolor/128x128/apps/io.github.virel0.GloriousLinux.png" width="96" alt=""></p>
+**Settings, lighting, keymaps and firmware updates for Glorious mice and keyboards - no Glorious CORE, no Windows.**
 
-![Overview](docs/overview.png)
+[![CI](https://github.com/Virel0/glorious-linux/actions/workflows/ci.yml/badge.svg)](https://github.com/Virel0/glorious-linux/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Virel0/glorious-linux?color=f5a623)](https://github.com/Virel0/glorious-linux/releases/latest)
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
+![Rust](https://img.shields.io/badge/made%20with-Rust-dea584)
 
-<details>
-<summary>More screenshots</summary>
+[Install](#install) · [Features](#features) · [Firmware updates](#firmware-updates) · [Troubleshooting](#troubleshooting) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
-![Performance](docs/performance.png)
-![Key lighting](docs/key-lighting.png)
-![Actuation](docs/actuation.png)
-![Keymap](docs/keymap.png)
+<img src="docs/overview.png" width="860" alt="Overview page">
 
-</details>
+</div>
+
+> **Unofficial.** Not affiliated with or endorsed by Glorious. Use at your own risk.
+
+## Features
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🖱️ Mouse
+- Reads the mouse's real settings - nothing to set up first
+- Battery, firmware and connection at a glance
+- Six DPI stages with colours; the active stage **follows the DPI button live**
+- Polling rate (125 - 8000 Hz), lift-off, motion sync, debounce, sleep timer
+- 12 lighting effects with an animated preview
+- Remap any button to a mouse function or a key
+
+</td>
+<td width="50%" valign="top">
+
+### ⌨️ Keyboard
+- Profiles, polling rate, debounce, idle timeout
+- 19 lighting effects, side lights, and **per-key colours painted on the board**
+- Hall-effect press point, rapid trigger, dead zone and per-key overrides
+- Keymap for the Base, Fn and Fn2 layers
+
+### ⬆️ Firmware
+- Checks mouse, receiver and keyboard against Glorious' latest release
+- Updates the mouse and receiver natively, with a dry run and progress bars
+
+</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td><img src="docs/performance.png" alt="Performance page"></td>
+<td><img src="docs/key-lighting.png" alt="Keyboard lighting page"></td>
+</tr>
+<tr>
+<td><img src="docs/actuation.png" alt="Actuation page"></td>
+<td><img src="docs/keymap.png" alt="Keymap page"></td>
+</tr>
+</table>
 
 ## Supported devices
 
 | Device | USB ID | Status |
 |---|---|---|
-| Model D3 Wireless (V3 receiver or cable) | `3794:a300` / `3794:a322` | Everything tested on hardware except flashing |
-| Model O3 Wireless | `3794:a300` / `3794:a310` | Same protocol, untested |
-| GMMK 3 HE 75% ANSI | `342d:e3de` | Reads tested; lighting / actuation / rapid trigger tested upstream; keymap is new |
+| Model D3 Wireless (receiver or cable) | `3794:a300` / `3794:a322` | ✅ Settings, live DPI, firmware update tested |
+| Model O3 Wireless | `3794:a300` / `3794:a310` | 🟡 Same protocol, untested |
+| GMMK 3 HE 75% ANSI | `342d:e3de` | ✅ Reads tested · lighting / actuation tested upstream · keymap is new |
 
-## Features
-
-**Mouse**
-- Reads the mouse's real settings - nothing to set up first.
-- Battery, firmware and connection at a glance; reconnects on its own when a sleeping mouse wakes.
-- Six DPI stages with colours (50-26000). The active stage follows the DPI button live.
-- Wireless and cable polling rate (125-8000 Hz), lift-off distance, motion sync, debounce, sleep timer.
-- All 12 lighting effects with an animated preview, separate cable / wireless brightness, colours.
-- Remap any of the six buttons to a mouse function or a keyboard key.
-
-**Keyboard (GMMK 3 HE)**
-- Profiles 1-3, polling rate, debounce, idle timeout.
-- 19 lighting effects, side lights, and per-key colours painted on a drawing of the board.
-- Hall-effect press point, rapid trigger with press / release sensitivity, bottom dead zone,
-  per-key overrides, and a live key-travel meter.
-- Keymap for the Base, Fn and Fn2 layers.
-
-**Firmware**
-- Compares the mouse, receiver and keyboard with Glorious' latest release.
-- Updates the mouse and receiver natively, with a dry run that shows every step first.
+Have another Glorious device? See [CONTRIBUTING.md](CONTRIBUTING.md) - most of the work is
+already done.
 
 ## Install
 
-One line (builds from source if you have Rust, otherwise downloads the release binary):
+**One line** - builds from source if you have Rust, otherwise downloads the release binary and
+checks its checksum:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Virel0/glorious-linux/main/install.sh | bash
 ```
 
-Or from a clone:
+**From a clone** (read the script first if you prefer):
 
 ```sh
 git clone https://github.com/Virel0/glorious-linux && cd glorious-linux && ./install.sh
 ```
 
-The installer puts `glorious` in `~/.local/bin` and adds **Glorious** to your app menu, then
-asks once for `sudo` to install the udev rule (so your user can talk to the devices) and
-`dfu-util` (used for the receiver's USB chip; everything else is built in). Unplug and replug
-your devices afterwards. `./uninstall.sh` removes it again.
-
-**Arch / CachyOS / Manjaro** - build a proper package instead:
+**Arch / CachyOS / Manjaro** - a proper package with everything system-wide:
 
 ```sh
 git clone https://github.com/Virel0/glorious-linux && cd glorious-linux/packaging/arch && makepkg -si
 ```
 
+The installer puts `glorious` in `~/.local/bin` and **Glorious** in your app menu, then asks
+once for `sudo` to install the [udev rule](SECURITY.md#what-the-app-can-touch) (device access
+for your user) and `dfu-util` (used for the receiver's USB chip; everything else is built in).
+Unplug and replug your devices afterwards. `./uninstall.sh` removes it again.
+
 ## Usage
 
-Open **Glorious** from your app menu, or run `glorious`. There is also a CLI:
+Open **Glorious** from your app menu, or run `glorious`. Everything is also scriptable:
 
 ```sh
-glorious mouse info                    # everything the mouse reports, including all settings
+glorious mouse info                    # status and every setting the mouse reports
 glorious mouse dpi 400,800,1600,3200 --active 3 --colors ff0000,00ff00,0000ff,ffffff
 glorious mouse polling 4000            # wireless; add --wired for the cable rate
 glorious mouse liftoff 1               # 0.7 | 1 | 2 (mm)
@@ -92,68 +117,93 @@ glorious mouse firmware flash --dry-run
 glorious keyboard info
 ```
 
-Add `-v` to print every HID report sent and received. If a command reports "no reply from the
-mouse", it is asleep: move it and try again.
-
-The keyboard can't report its lighting, actuation or keymap, so - like Glorious CORE - the last
-applied values are stored, in `~/.config/glorious-core-rs/state.json`. That file is shared with
-[inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux), so settings made there
-show up here too.
+Add `-v` to see every HID report sent and received.
 
 ## Firmware updates
 
-Updates use Glorious' own firmware packages, downloaded from the same public server Glorious
-CORE uses. The mouse update needs the USB cable plugged into the mouse. The sequence is:
+Updates use Glorious' own firmware, downloaded from the same server Glorious CORE uses and
+checked against a pinned SHA-256 before anything is flashed. The mouse must be on its USB cable;
+the app refuses otherwise. An update runs in up to three steps:
 
-1. **Mouse**: a HID command reboots it into its nRF52 bootloader, and the built-in Nordic DFU
-   client sends the signed package (init packet, then the image in CRC-checked objects).
-2. **Receiver, radio chip**: the same, with the receiver's nRF52 bootloader.
-3. **Receiver, USB chip**: a HID command reboots the GD32 into its ROM DFU bootloader
-   (`28e9:0189`), and `dfu-util` flashes it.
+1. **Mouse** - reboots into its nRF52 bootloader; the built-in Nordic DFU client sends the
+   signed image in CRC-checked pieces.
+2. **Receiver radio** - the same, through the receiver's nRF52 bootloader.
+3. **Receiver USB chip** - reboots into the GD32 ROM bootloader and is flashed with `dfu-util`.
 
 The nRF52 bootloaders keep the old firmware until a complete, verified image has arrived, so an
-interrupted update can simply be retried. Run the dry run first to see exactly what will happen.
-The HID commands match Glorious CORE's updater byte for byte, and the DFU client is covered by
-tests against a simulated bootloader, but real flashing has not been exercised on hardware yet
-because no firmware newer than mouse 1.3.3 / receiver 1.3.0 + 1.1.0 has been released.
+interrupted update can simply be run again. Try the **dry run** first to see every step.
+Reinstalling the current mouse firmware has been tested on a Model D3.
 
-GMMK 3 HE keyboard updates use a separate Windows-only updater and are not supported yet; the
-Firmware page tells you when one is available.
+GMMK 3 HE keyboard updates still need Glorious CORE on Windows; the Firmware page tells you when
+one is available.
+
+## Troubleshooting
+
+<details>
+<summary><b>"No reply from the mouse"</b></summary>
+
+The mouse is asleep. Move it - the app reconnects on its own within a few seconds.
+</details>
+
+<details>
+<summary><b>"Permission denied" / device not found</b></summary>
+
+Run the installer again and let it install the udev rule, then unplug and replug the device.
+</details>
+
+<details>
+<summary><b>The keyboard shows "Connecting…" for a few seconds</b></summary>
+
+Normal: the first read from the keyboard takes about 3.5 seconds. The pages show your saved
+settings meanwhile; applying waits until the keyboard answers.
+</details>
+
+<details>
+<summary><b>The taskbar shows a generic icon</b></summary>
+
+Log out and back in once - KDE and GNOME cache icon lookups per session.
+</details>
+
+<details>
+<summary><b>Where are the keyboard settings stored?</b></summary>
+
+The keyboard can't report its lighting, actuation or keymap, so - like Glorious CORE - the last
+applied values are kept in `~/.config/glorious-core-rs/state.json`, shared with
+[inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux). Mouse settings are read
+from the mouse itself.
+</details>
 
 ## How it works
 
 The protocols were re-implemented for interoperability from Glorious CORE 2.1.23 (an Electron
 app whose device logic is plain JavaScript) and checked against real hardware:
 
-- **Mouse**: 64-byte HID feature reports with report ID 3, `[0x03, target, command, length,
-  payload...]`; target `0xBB` is the mouse (relayed by the receiver over 2.4 GHz), `0xAA` the
-  receiver. Every setter has a getter at `command | 0x80`, which is how the app reads settings back.
-- **Keyboard**: uses the protocol, state and device code of
-  [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux) (MIT, by thomas
-  griffin), pinned to a commit whose reports were checked against Glorious CORE.
-- **Firmware updaters**: CORE ships them as packaged Node.js executables; their exact HID
-  commands and tool invocations were captured by running them against a mocked HID layer.
+- **Mouse** - 64-byte HID feature reports with report ID 3: `[0x03, target, command, length,
+  payload…]`, where target `0xBB` is the mouse (relayed over 2.4 GHz by the receiver) and `0xAA`
+  the receiver. Every setter has a getter at `command | 0x80`, which is how settings are read back.
+- **Keyboard** - the protocol and state code of
+  [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux), pinned to a commit
+  whose reports were checked against Glorious CORE.
+- **Firmware** - CORE's updaters are packaged Node.js programs; their exact HID commands were
+  captured by running them against a mocked HID layer. The Nordic DFU client is our own, tested
+  against a simulated bootloader and on real hardware.
 
 No Glorious code, binaries or firmware are included in this repository.
 
 ## Credits
 
 - [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux) (MIT) - keyboard
-  protocol library and the board layout the keyboard pages are drawn from.
-- Fonts: Space Grotesk, Work Sans, JetBrains Mono (SIL Open Font License, see `assets/fonts`).
-- Icons: [Phosphor](https://phosphoricons.com) via egui-phosphor.
+  protocol library and board layout
+- Space Grotesk, Work Sans and JetBrains Mono fonts (SIL Open Font License, see `assets/fonts`)
+- [Phosphor](https://phosphoricons.com) icons via egui-phosphor, built with [egui](https://github.com/emilk/egui)
 
 ## License
 
-Copyright (C) 2026 Virel0
-
-glorious-linux is free software: you can redistribute it and/or modify it under the terms of the
-GNU General Public License as published by the Free Software Foundation, either version 3 of
-the License, or (at your option) any later version. See [LICENSE](LICENSE).
-
-In short: anyone may use, study, change and share it, including commercially - but copies and
-modified versions they distribute must stay under the GPL with their source available, and
-devices that ship it can't be locked against running modified versions.
+Copyright © 2026 Virel0. Licensed under the [GNU General Public License v3.0 or later](LICENSE):
+anyone may use, study, change and share it, including commercially, but copies and modified
+versions they distribute must stay under the GPL with their source available, and devices that
+ship it can't be locked against running modified versions.
 
 Releases up to v0.3.0 were published under the MIT license. The keyboard layout table in
-`src/keybed.rs` comes from inglorious-core-linux and keeps its MIT notice.
+`src/keybed.rs` and the keyboard I/O in `src/kbdevice.rs` come from inglorious-core-linux and
+keep its MIT notice.

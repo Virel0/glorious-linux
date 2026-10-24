@@ -5,6 +5,7 @@ mod gmmk3he;
 mod gui;
 mod hid;
 mod kb_gui;
+mod kbdevice;
 mod keybed;
 mod nordic_dfu;
 mod settings;
@@ -139,6 +140,9 @@ enum FirmwareCmd {
         /// Flash even if already up to date
         #[arg(long)]
         force: bool,
+        /// Flash a firmware bundle newer than this version knows (its checksum can't be verified)
+        #[arg(long)]
+        allow_unverified: bool,
     },
 }
 
@@ -177,12 +181,20 @@ fn mouse_info(m: &Mouse) -> Result<()> {
         .enumerate()
         .map(|(i, st)| {
             let mark = if i == p.active { "*" } else { "" };
-            if st.enabled { format!("{mark}{}", st.dpi) } else { "off".into() }
+            if st.enabled {
+                format!("{mark}{}", st.dpi)
+            } else {
+                "off".into()
+            }
         })
         .collect();
     println!("DPI stages:  {}   (* = active)", stages.join(" / "));
     println!("Polling:     {} Hz wireless, {} Hz cable", p.polling_wireless, p.polling_wired);
-    println!("Lift-off:    {} mm   Motion sync: {}", ["0.7", "1", "2"].get(p.lift_off as usize).unwrap_or(&"?"), if p.motion_sync { "on" } else { "off" });
+    println!(
+        "Lift-off:    {} mm   Motion sync: {}",
+        ["0.7", "1", "2"].get(p.lift_off as usize).unwrap_or(&"?"),
+        if p.motion_sync { "on" } else { "off" }
+    );
     println!("Debounce:    {} ms mechanical, {} ms optical", p.debounce_mechanical, p.debounce_optical);
     let buttons: Vec<String> = s.buttons.iter().map(|(b, a)| format!("{b}={a}")).collect();
     println!("Buttons:     {}", buttons.join(", "));
@@ -198,8 +210,10 @@ fn mouse_info(m: &Mouse) -> Result<()> {
 fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
     if let MouseCmd::Firmware { cmd } = cmd {
         return match cmd {
-            FirmwareCmd::Check => firmware::cli(false, firmware::Part::All, false, false),
-            FirmwareCmd::Flash { part, dry_run, force } => firmware::cli(true, part, dry_run, force),
+            FirmwareCmd::Check => firmware::cli(false, firmware::Part::All, false, false, false),
+            FirmwareCmd::Flash { part, dry_run, force, allow_unverified } => {
+                firmware::cli(true, part, dry_run, force, allow_unverified)
+            }
         };
     }
     let api = HidApi::new()?;
@@ -228,7 +242,11 @@ fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
             println!("{} polling rate set to {rate} Hz", if wired { "Wired" } else { "Wireless" });
         }
         MouseCmd::Liftoff { mm } => {
-            m.set_lift_off(match mm.as_str() { "0.7" => 0, "1" => 1, _ => 2 })?;
+            m.set_lift_off(match mm.as_str() {
+                "0.7" => 0,
+                "1" => 1,
+                _ => 2,
+            })?;
             println!("Lift-off distance set to {mm} mm");
         }
         MouseCmd::Debounce { mechanical, optical } => {
@@ -276,7 +294,11 @@ fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
                 polls += 1;
                 match m.active_stage_fast() {
                     Ok(s) if Some(s) != last => {
-                        println!("{:>7.2}s  stage {}  ({polls} polls, {errors} errors)", start.elapsed().as_secs_f32(), s + 1);
+                        println!(
+                            "{:>7.2}s  stage {}  ({polls} polls, {errors} errors)",
+                            start.elapsed().as_secs_f32(),
+                            s + 1
+                        );
                         last = Some(s);
                     }
                     Ok(_) => {}
@@ -290,10 +312,15 @@ fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
         MouseCmd::Raw { target, cmd, payload } => {
             let target = if target == "receiver" { v3::RECEIVER } else { v3::MOUSE };
             let cmd = u8::from_str_radix(cmd.trim_start_matches("0x"), 16)?;
-            let payload: Vec<u8> = payload.iter().map(|b| u8::from_str_radix(b.trim_start_matches("0x"), 16)).collect::<Result<_, _>>()?;
+            let payload: Vec<u8> =
+                payload.iter().map(|b| u8::from_str_radix(b.trim_start_matches("0x"), 16)).collect::<Result<_, _>>()?;
             let reply = m.query(target, cmd, &payload)?;
             let end = reply.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-            println!("{:02x}: {}", cmd, reply[..end.max(1)].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "));
+            println!(
+                "{:02x}: {}",
+                cmd,
+                reply[..end.max(1)].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+            );
         }
         MouseCmd::Firmware { .. } => unreachable!(),
     }

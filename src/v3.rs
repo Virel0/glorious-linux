@@ -44,18 +44,22 @@ const RCMD_FIRMWARE_2: u8 = 0xEE;
 const LOW_POWER_MS: u32 = 60_000;
 const GET: u8 = 0x80;
 
+#[rustfmt::skip]
 pub const EFFECTS: [(&str, u8); 12] = [
     ("off", 0), ("rainbow", 1), ("breathing-single", 2), ("breathing", 3), ("seamless-breathing", 4),
     ("solid", 5), ("fairies", 6), ("ghost", 7), ("cascade", 8), ("prismatic", 9), ("wave", 10), ("ripple", 11),
 ];
-pub const BUTTONS: [(&str, u8); 6] = [("left", 0), ("right", 1), ("middle", 2), ("forward", 7), ("back", 8), ("dpi", 19)];
+pub const BUTTONS: [(&str, u8); 6] =
+    [("left", 0), ("right", 1), ("middle", 2), ("forward", 7), ("back", 8), ("dpi", 19)];
 /// (name, function type, arg1, arg2) from CORE's MouseFunctionToHIDMap.
+#[rustfmt::skip]
 pub const FUNCTIONS: [(&str, u8, u8, u8); 13] = [
     ("left", 1, 0, 0), ("right", 1, 1, 0), ("middle", 1, 2, 0), ("back", 1, 3, 0), ("forward", 1, 4, 0),
     ("dpi-up", 8, 9, 0), ("dpi-down", 8, 10, 0), ("dpi-shift", 8, 14, 0), ("battery", 8, 6, 0),
     ("scroll-up", 2, 0, 0), ("scroll-down", 2, 1, 0), ("profile-cycle", 8, 2, 0), ("disable", 0, 0, 0),
 ];
 pub const FN_KEYBOARD: u8 = 4;
+#[rustfmt::skip]
 pub const DEFAULT_STAGE_COLORS: [[u8; 3]; 6] =
     [[0x64, 0x19, 0x00], [0, 0, 0xFF], [0xFF, 0, 0], [0, 0xFF, 0], [0x55, 0, 0xFF], [0, 0xFF, 0xFF]];
 
@@ -70,9 +74,25 @@ pub fn key_names() -> Vec<(String, u8)> {
     keys.push(("0".into(), 0x27));
     keys.extend((1..=12).map(|n| (format!("f{n}"), 0x39 + n)));
     for (name, code) in [
-        ("enter", 0x28), ("esc", 0x29), ("backspace", 0x2A), ("tab", 0x2B), ("space", 0x2C), ("insert", 0x49),
-        ("home", 0x4A), ("pageup", 0x4B), ("delete", 0x4C), ("end", 0x4D), ("pagedown", 0x4E), ("right", 0x4F),
-        ("left", 0x50), ("down", 0x51), ("up", 0x52), ("ctrl", 0xE0), ("shift", 0xE1), ("alt", 0xE2), ("super", 0xE3),
+        ("enter", 0x28),
+        ("esc", 0x29),
+        ("backspace", 0x2A),
+        ("tab", 0x2B),
+        ("space", 0x2C),
+        ("insert", 0x49),
+        ("home", 0x4A),
+        ("pageup", 0x4B),
+        ("delete", 0x4C),
+        ("end", 0x4D),
+        ("pagedown", 0x4E),
+        ("right", 0x4F),
+        ("left", 0x50),
+        ("down", 0x51),
+        ("up", 0x52),
+        ("ctrl", 0xE0),
+        ("shift", 0xE1),
+        ("alt", 0xE2),
+        ("super", 0xE3),
     ] {
         keys.push((name.into(), code));
     }
@@ -366,7 +386,14 @@ impl Mouse {
     }
 
     /// `rgb: None` selects the effect's multicolour mode.
-    pub fn set_lighting(&self, effect: u8, brightness: u8, wireless_brightness: u8, speed: u16, rgb: Option<[u8; 3]>) -> Result<()> {
+    pub fn set_lighting(
+        &self,
+        effect: u8,
+        brightness: u8,
+        wireless_brightness: u8,
+        speed: u16,
+        rgb: Option<[u8; 3]>,
+    ) -> Result<()> {
         let s = speed.max(10).to_be_bytes();
         let [r, g, b] = rgb.unwrap_or([0, 0, 0]);
         let p = [effect, brightness, wireless_brightness, s[0], s[1], 8, rgb.is_some() as u8, r, g, b];

@@ -102,8 +102,14 @@ case "$mode" in
     binary)
         command -v curl >/dev/null || die "curl is needed to download the release"
         info "Downloading the latest release..."
-        curl -fsSL "https://github.com/$REPO/releases/latest/download/glorious-linux-x86_64-linux.tar.gz" | tar -xz -C "$work" \
+        base="https://github.com/$REPO/releases/latest/download/glorious-linux-x86_64-linux.tar.gz"
+        curl -fsSL -o "$work/release.tar.gz" "$base" && curl -fsSL -o "$work/release.sha256" "$base.sha256" \
             || die "download failed - is there a release yet? Otherwise install Rust and use --source."
+        expected="$(cut -d' ' -f1 "$work/release.sha256")"
+        actual="$(sha256sum "$work/release.tar.gz" | cut -d' ' -f1)"
+        [ -n "$expected" ] && [ "$expected" = "$actual" ] || die "checksum mismatch for the downloaded release - not installing it."
+        ok "checksum verified"
+        tar -xzf "$work/release.tar.gz" -C "$work"
         install -m755 "$work/glorious-linux/glorious" "$BIN/glorious"
         assets="$work/glorious-linux/packaging"
         ;;

@@ -6,8 +6,8 @@
 //!   receiver : HID enter-DFU (nRF52) -> Nordic serial DFU -> HID exit-DFU,
 //!              HID enter-DFU (GD32) -> GigaDevice ROM DFU -> `dfu-util`
 //! Progress goes out as `FlashEvent`s so the CLI and the GUI share this code.
-use crate::{hid, nordic_dfu};
 use crate::v3::{self, Mouse, MOUSE, RECEIVER, REPORT_ID, REPORT_LEN, VID};
+use crate::{hid, nordic_dfu};
 use anyhow::{anyhow, bail, Context, Result};
 use hidapi::HidApi;
 use std::io::{BufRead, BufReader, Read};
@@ -22,6 +22,28 @@ const GD32_DFU: &str = "28e9:0189";
 const DFU_MAGIC: [u8; 4] = [0x59, 0x4F, 0x4C, 0x4F]; // "YOLO"
 const SEL_GD32: u8 = 0x00;
 const SEL_NRF52: u8 = 0x01;
+/// Firmware bundles are ~200 KB; refuse anything absurd.
+const MAX_BUNDLE_BYTES: u64 = 32 * 1024 * 1024;
+
+/// SHA-256 of the Glorious firmware bundles this version has been checked against. The nRF52
+/// images inside are signed and verified by the devices themselves, but the receiver's GD32
+/// image is not, so the whole bundle is pinned. A bundle with a known name and a different hash
+/// is refused; an unknown (newer) bundle needs explicit confirmation.
+#[rustfmt::skip]
+const KNOWN_BUNDLES: [(&str, &str); 4] = [
+    ("Model_D3_Wireless_Black-1.3.3_1.1.0-1.3.0_1.0.0.zip", "b4142ab4705a9a9872bdb51b8aea5af78de1512d5867776f2d59a4b00ea30038"),
+    ("Model_D3_Wireless_White-1.3.3_1.1.0-1.3.0_1.0.0.zip", "da58c82303e89dbea300c60b808fa0ad041153681e5ec3e68b4fb89bb22a4993"),
+    ("Model_O3_Wireless_Black-1.3.3_1.1.0-1.3.0_1.0.0.zip", "470ed85d60dc9e6ef8026af72ff561a45182f3ad47d145670e779cfaf941204f"),
+    ("Model_O3_Wireless_White-1.3.3_1.1.0-1.3.0_1.0.0.zip", "542e796ecb375957be4285705c9d4f757407fd489ac559dc564149fd520ac9c1"),
+];
+
+fn bundle_name(url: &str) -> &str {
+    url.rsplit('/').next().unwrap_or(url)
+}
+
+fn known_hash(url: &str) -> Option<&'static str> {
+    KNOWN_BUNDLES.iter().find(|(name, _)| *name == bundle_name(url)).map(|(_, hash)| *hash)
+}
 
 pub fn manifest() -> Result<serde_json::Value> {
     ureq::get(MANIFEST_URL).call()?.into_json().context("bad firmware manifest")
@@ -49,6 +71,13 @@ pub struct Status {
 }
 
 impl Status {
+    /// Whether the bundle to download is one whose checksum this version knows.
+    pub fn bundle_verified(&self) -> bool {
+        known_hash(&self.url).is_some()
+    }
+}
+
+impl Status {
     pub fn mouse_outdated(&self) -> bool {
         self.mouse != self.latest_mouse
     }
@@ -58,7 +87,9 @@ impl Status {
     /// Which parts `flash` would touch.
     pub fn plan(&self, part: Part, force: bool) -> (bool, bool) {
         let mouse = matches!(part, Part::All | Part::Mouse) && (self.mouse_outdated() || force);
-        let receiver = matches!(part, Part::All | Part::Receiver) && self.receiver.is_some() && (self.receiver_outdated() || force);
+        let receiver = matches!(part, Part::All | Part::Receiver)
+            && self.receiver.is_some()
+            && (self.receiver_outdated() || force);
         (mouse, receiver)
     }
 }
@@ -68,17 +99,18 @@ pub fn status() -> Result<Status> {
     // Read everything from the mouse first so its lock is released before the network fetch.
     let m = Mouse::open(&api, false)?;
     let name = m.model_name()?;
-    let &(_, product, wired_pid, boot_pid) = v3::MODELS
-        .iter()
-        .find(|x| x.0 == name)
-        .ok_or_else(|| anyhow!("unknown mouse model {name:?}"))?;
+    let &(_, product, wired_pid, boot_pid) =
+        v3::MODELS.iter().find(|x| x.0 == name).ok_or_else(|| anyhow!("unknown mouse model {name:?}"))?;
     let mut receiver = if m.via_receiver() { Some(m.receiver_firmware()?.to_vec()) } else { None };
     let color = m.color()?;
     let mouse = m.firmware()?;
     drop(m);
     // With the mouse on its cable the receiver is a separate device; it still answers for itself.
     if receiver.is_none() {
-        receiver = Mouse::open_pids(&api, &[v3::PID_RECEIVER], false).ok().and_then(|r| r.receiver_firmware().ok()).map(|r| r.to_vec());
+        receiver = Mouse::open_pids(&api, &[v3::PID_RECEIVER], false)
+            .ok()
+            .and_then(|r| r.receiver_firmware().ok())
+            .map(|r| r.to_vec());
     }
     if let Some(r) = receiver.as_mut() {
         r.sort();
@@ -282,7 +314,8 @@ impl Flasher<'_> {
         self.send_dfu(st.wired_pid, MOUSE, &[&DFU_MAGIC[..], &[0x01]].concat())?;
         let port = self.port(st.boot_pid, "the mouse bootloader")?;
         // CORE runs `nrfutil dfu serial --baud-rate 115200` with nrfutil's defaults otherwise.
-        let opts = nordic_dfu::Options { prn: 0, connect_delay: Duration::from_secs(3), timeout: Duration::from_secs(30) };
+        let opts =
+            nordic_dfu::Options { prn: 0, connect_delay: Duration::from_secs(3), timeout: Duration::from_secs(30) };
         self.nordic(&port, &files.mouse, opts)
     }
 
@@ -293,7 +326,8 @@ impl Flasher<'_> {
         let port = self.port(v3::PID_RECEIVER_BOOT, "the receiver nRF bootloader")?;
         // Same settings CORE passes to nrfutil for the receiver: a receipt after every packet,
         // which paces the transfer through the receiver's USB-to-UART bridge.
-        let opts = nordic_dfu::Options { prn: 1, connect_delay: Duration::from_secs(3), timeout: Duration::from_secs(60) };
+        let opts =
+            nordic_dfu::Options { prn: 1, connect_delay: Duration::from_secs(3), timeout: Duration::from_secs(60) };
         self.nordic(&port, &files.nrf, opts)?;
         self.wait_back(v3::PID_RECEIVER, "the receiver to come back")?;
         self.send_dfu(v3::PID_RECEIVER, RECEIVER, &dfu(SEL_NRF52, 0))?;
@@ -315,40 +349,54 @@ struct Files {
     mouse: String,
     nrf: String,
     gd32: String,
-    workdir: PathBuf,
+    /// Private (0700, random name) and removed when dropped.
+    _workdir: tempfile::TempDir,
 }
 
-impl Drop for Files {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.workdir);
-    }
-}
-
-fn fetch_bundle(url: &str, emit: &dyn Fn(FlashEvent)) -> Result<Files> {
+fn fetch_bundle(url: &str, allow_unverified: bool, emit: &dyn Fn(FlashEvent)) -> Result<Files> {
+    use sha2::{Digest, Sha256};
     emit(FlashEvent::Log(format!("Downloading {url}")));
     let mut data = Vec::new();
-    ureq::get(url).call()?.into_reader().read_to_end(&mut data)?;
-    let workdir = std::env::temp_dir().join(format!("glorious-fw-{}", std::process::id()));
-    fs::create_dir_all(&workdir)?;
-    // extract() rejects entries that would escape workdir.
-    zip::ZipArchive::new(std::io::Cursor::new(data))?.extract(&workdir)?;
-    let root = fs::read_dir(&workdir)?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| p.is_dir() && !p.ends_with("__MACOSX"))
-        .ok_or_else(|| anyhow!("empty firmware bundle"))?;
-    let path = |rel: &str| root.join(rel).to_string_lossy().into_owned();
-    let files = Files {
-        mouse: path("mouse/mouse_dfu_package.zip"),
-        nrf: path("receiver/release_dongle_nrf.zip"),
-        gd32: path("receiver/release_dongle_gd32.bin"),
-        workdir,
-    };
-    for f in [&files.mouse, &files.nrf, &files.gd32] {
-        if !Path::new(f).is_file() {
-            bail!("firmware bundle is missing {f}");
-        }
+    ureq::get(url).call()?.into_reader().take(MAX_BUNDLE_BYTES + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > MAX_BUNDLE_BYTES {
+        bail!("firmware download is larger than {} MB - refusing it", MAX_BUNDLE_BYTES / 1024 / 1024);
     }
+    let digest: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
+    match known_hash(url) {
+        Some(expected) if expected == digest => emit(FlashEvent::Log(format!("  checksum verified (sha256 {})", &digest[..16]))),
+        Some(expected) => bail!(
+            "the downloaded firmware does not match the known checksum for {} (got {digest}, expected {expected}) - refusing to flash it",
+            bundle_name(url)
+        ),
+        None if allow_unverified => emit(FlashEvent::Log(format!("  unverified bundle, used as confirmed (sha256 {digest})"))),
+        None => bail!("{} is newer than this version of glorious-linux knows, so its checksum can't be verified", bundle_name(url)),
+    }
+    let workdir = tempfile::Builder::new()
+        .prefix("glorious-fw-")
+        .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
+        .tempdir()?;
+    // Only the three files we need are read from the archive and written under fixed names; nothing
+    // else in it (paths, symlinks, permissions) ever reaches the disk.
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data))?;
+    let mut take = |suffix: &str, name: &str| -> Result<String> {
+        let index = (0..archive.len())
+            .find(|&i| {
+                archive.by_index(i).is_ok_and(|f| {
+                    f.is_file() && f.name().is_ok_and(|n| !n.starts_with("__MACOSX") && n.ends_with(suffix))
+                })
+            })
+            .ok_or_else(|| anyhow!("firmware bundle is missing {suffix}"))?;
+        let mut entry = archive.by_index(index)?;
+        let mut bytes = Vec::new();
+        entry.by_ref().take(MAX_BUNDLE_BYTES).read_to_end(&mut bytes)?;
+        let path = workdir.path().join(name);
+        fs::write(&path, bytes)?;
+        Ok(path.to_string_lossy().into_owned())
+    };
+    let mouse = take("/mouse/mouse_dfu_package.zip", "mouse_dfu_package.zip")?;
+    let nrf = take("/receiver/release_dongle_nrf.zip", "release_dongle_nrf.zip")?;
+    let gd32 = take("/receiver/release_dongle_gd32.bin", "release_dongle_gd32.bin")?;
+    let files = Files { mouse, nrf, gd32, _workdir: workdir };
     Ok(files)
 }
 
@@ -377,12 +425,19 @@ pub fn blocker(st: &Status, part: Part, force: bool, dry: bool) -> Option<String
 
 /// Flash the parts selected by `st.plan(part, force)`. The caller is responsible for confirmation.
 /// Refuses up front (without touching anything) when a needed device or tool is missing.
-pub fn flash(st: &Status, part: Part, force: bool, dry: bool, emit: &dyn Fn(FlashEvent)) -> Result<()> {
+pub fn flash(
+    st: &Status,
+    part: Part,
+    force: bool,
+    dry: bool,
+    allow_unverified: bool,
+    emit: &dyn Fn(FlashEvent),
+) -> Result<()> {
     if let Some(reason) = blocker(st, part, force, dry) {
         bail!("{reason}");
     }
     let (do_mouse, do_recv) = st.plan(part, force);
-    let files = fetch_bundle(&st.url, emit)?;
+    let files = fetch_bundle(&st.url, allow_unverified || dry, emit)?;
     let steps = usize::from(do_mouse) + if do_recv { 2 } else { 0 };
     let mut f = Flasher { api: HidApi::new()?, dry, emit, step: 0, steps };
     if do_mouse {
@@ -391,23 +446,40 @@ pub fn flash(st: &Status, part: Part, force: bool, dry: bool, emit: &dyn Fn(Flas
     if do_recv {
         f.receiver(&files)?;
     }
-    f.log(if dry { "Dry run finished - nothing was sent.".into() } else { "Done. Check again to confirm the new versions.".into() });
+    f.log(if dry {
+        "Dry run finished - nothing was sent.".into()
+    } else {
+        "Done. Check again to confirm the new versions.".into()
+    });
     Ok(())
 }
 
-pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool) -> Result<()> {
+pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool, allow_unverified: bool) -> Result<()> {
     let st = status()?;
     let mark = |need: bool| if need { "  <- update available" } else { "" };
     println!("{} ({})", st.product, st.color);
     println!("  mouse    : {:<12} latest {}{}", st.mouse, st.latest_mouse, mark(st.mouse_outdated()));
     if let Some(r) = &st.receiver {
-        println!("  receiver : {:<12} latest {}{}", r.join("/"), st.latest_receiver.join("/"), mark(st.receiver_outdated()));
+        println!(
+            "  receiver : {:<12} latest {}{}",
+            r.join("/"),
+            st.latest_receiver.join("/"),
+            mark(st.receiver_outdated())
+        );
     }
     if !flash_requested {
         return Ok(());
     }
     if let Some(reason) = blocker(&st, part, force, dry) {
         println!("{reason}");
+        return Ok(());
+    }
+    if !st.bundle_verified() && !dry && !allow_unverified {
+        println!(
+            "{} is newer than this version of glorious-linux knows, so its checksum can't be verified.\n\
+             Update glorious-linux, or pass --allow-unverified to flash it anyway.",
+            bundle_name(&st.url)
+        );
         return Ok(());
     }
     if !dry {
@@ -419,7 +491,7 @@ pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool) -> Result<
         }
     }
     let bar = std::cell::Cell::new(false);
-    flash(&st, part, force, dry, &|event| match event {
+    flash(&st, part, force, dry, allow_unverified, &|event| match event {
         FlashEvent::Log(line) => {
             if bar.replace(false) {
                 eprintln!();
@@ -441,7 +513,33 @@ pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::dfu_util_percent;
+    use super::{dfu_util_percent, fetch_bundle, known_hash};
+
+    const D3_BLACK: &str =
+        "https://nyc3.digitaloceanspaces.com/gloriouscore/Glorious_Core/Model_D3_Wireless_Black-1.3.3_1.1.0-1.3.0_1.0.0.zip";
+
+    #[test]
+    fn pins_known_bundles_only() {
+        assert!(known_hash(D3_BLACK).is_some());
+        assert!(known_hash("https://example.com/Model_D3_Wireless_Black-9.9.9.zip").is_none());
+    }
+
+    /// Downloads the real bundle: `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn downloads_and_verifies_a_known_bundle() {
+        let files = fetch_bundle(D3_BLACK, false, &|_| {}).unwrap();
+        let dir = std::path::Path::new(&files.gd32).parent().unwrap().to_path_buf();
+        let mouse = crate::nordic_dfu::Package::load(std::path::Path::new(&files.mouse)).unwrap();
+        let nrf = crate::nordic_dfu::Package::load(std::path::Path::new(&files.nrf)).unwrap();
+        assert_eq!((mouse.init.len(), mouse.firmware.len()), (141, 164_840));
+        assert_eq!((nrf.init.len(), nrf.firmware.len()), (140, 50_188));
+        assert_eq!(std::fs::metadata(&files.gd32).unwrap().len(), 28_052);
+        let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&dir).unwrap().permissions());
+        assert_eq!(mode & 0o777, 0o700, "temp dir must be private");
+        drop(files);
+        assert!(!dir.exists(), "temp dir must be removed");
+    }
 
     #[test]
     fn parses_dfu_util_progress_lines() {

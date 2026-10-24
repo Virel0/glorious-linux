@@ -1,11 +1,21 @@
-# Let the logged-in user talk to Glorious devices without root.
+# glorious-linux: let the logged-in user talk to Glorious devices without root.
 # Install: sudo cp packaging/70-glorious-linux.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+#
+# Access is limited to the interfaces the app needs. HID interfaces that carry typing (the
+# keyboard's own key reports, and the receiver's interface for keys bound to mouse buttons) are
+# deliberately left closed: any program running as you could otherwise read keystrokes from them.
 
-# Model O3/D3 mice, V3 wireless receiver and their bootloaders (VID 3794)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3794", TAG+="uaccess"
-# GMMK 3 / GMMK 3 HE keyboards (VID 342d)
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="342d", TAG+="uaccess"
-# nRF52 serial DFU bootloaders of the mouse and receiver (show up as /dev/ttyACM*)
-SUBSYSTEM=="tty", ATTRS{idVendor}=="3794", TAG+="uaccess"
-# GD32 ROM USB-DFU bootloader of the receiver (used by dfu-util)
+# V3 wireless receiver: vendor settings interface only (interface 0; interface 1 sends keystrokes).
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3794", ATTRS{idProduct}=="a300", ATTRS{bInterfaceNumber}=="00", TAG+="uaccess"
+# Model D3 / O3 on their USB cable (settings and the firmware-update command).
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3794", ATTRS{idProduct}=="a322|a310", TAG+="uaccess"
+# GMMK 3 HE 75%: vendor settings interface only (interface 2).
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="342d", ATTRS{idProduct}=="e3de", ATTRS{bInterfaceNumber}=="02", TAG+="uaccess"
+# Optional: live key-travel meter. Interface 1 also carries every keystroke, so only enable this
+# if you accept that programs running as you could read your typing from it.
+#SUBSYSTEM=="hidraw", ATTRS{idVendor}=="342d", ATTRS{idProduct}=="e3de", ATTRS{bInterfaceNumber}=="01", TAG+="uaccess"
+
+# nRF52 serial DFU bootloaders of the mouse and receiver (show up as /dev/ttyACM*).
+SUBSYSTEM=="tty", ATTRS{idVendor}=="3794", ATTRS{idProduct}=="a323|a311|a301", TAG+="uaccess"
+# GD32 ROM USB-DFU bootloader of the receiver (used by dfu-util).
 SUBSYSTEM=="usb", ATTRS{idVendor}=="28e9", ATTRS{idProduct}=="0189", TAG+="uaccess"

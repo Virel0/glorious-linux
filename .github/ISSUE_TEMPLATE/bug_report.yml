@@ -1,0 +1,32 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Security problem? Please report it privately instead - see SECURITY.md.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `glorious --version`
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and desktop
+      placeholder: e.g. CachyOS, KDE Plasma 6 (Wayland)
+  - type: textarea
+    id: info
+    attributes:
+      label: Device output
+      description: Output of `glorious mouse info -v` and/or `glorious keyboard info`
+      render: text
