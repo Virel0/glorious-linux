@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.5.1
+- Updated the GUI toolkit (eframe/egui 0.37) and the HTTP client (ureq 3).
+- The keyboard protocol code is now part of the project (from inglorious-core-linux, MIT), and
+  the Phosphor icon font is bundled directly - no git dependency, fewer crates, and icon updates
+  can't block GUI upgrades.
+- The keyboard connects reliably right after the app was closed mid-read (it now retries a stale
+  reply instead of showing "not found" for 20 seconds), and retries every 2 s until connected.
+
 ## v0.5.0
 
 **Security**

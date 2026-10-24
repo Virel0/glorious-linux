@@ -118,12 +118,20 @@ impl Transport {
     }
 
     pub fn query(&self, r: &Report) -> Result<Report> {
-        self.send(r)?;
+        // A program that quit in the middle of a query leaves its answer waiting on the board;
+        // if that stale answer comes back first, ask again.
         let mut wire = [0; 65];
-        let n = self.cfg.get_feature_report(&mut wire)?;
-        thread::sleep(GET_WAIT);
-        ensure!(n == 65, "short feature response: {n}");
-        ensure!(wire[1] == r[0], "unexpected response opcode {:02x}", wire[1]);
+        for attempt in 0..3 {
+            self.send(r)?;
+            wire = [0; 65];
+            let n = self.cfg.get_feature_report(&mut wire)?;
+            thread::sleep(GET_WAIT);
+            ensure!(n == 65, "short feature response: {n}");
+            if wire[1] == r[0] {
+                break;
+            }
+            ensure!(attempt < 2, "unexpected response opcode {:02x}", wire[1]);
+        }
         let mut out = [0; 64];
         out.copy_from_slice(&wire[1..]);
         Ok(out)

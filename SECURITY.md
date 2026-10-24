@@ -57,4 +57,5 @@ accept that trade-off.
   and weekly, and Dependabot proposes dependency and GitHub Actions updates.
 - GitHub Actions are pinned to commit hashes and run with read-only permissions unless a job
   needs more (only the release job can write, to publish the release).
-- The keyboard protocol library (inglorious-core-linux) is pinned to a reviewed commit.
+- There are no git or path dependencies: the keyboard protocol code from inglorious-core-linux is
+  part of this repository (`src/magneton`), taken from a commit that was checked against Glorious CORE.

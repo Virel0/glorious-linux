@@ -2,12 +2,12 @@
 //! channel, so the window never blocks on the mouse's 30-200 ms report delays.
 use crate::firmware::{self, Part};
 use crate::gmmk3he;
+use crate::icons as icon;
 use crate::kb_gui::{Keyboard, Page};
 use crate::settings::{self, LightingSettings, Performance, Settings};
 use crate::theme::{self, *};
 use crate::v3::{key_names, Mouse, Snapshot, EFFECTS, FUNCTIONS};
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, Ui};
-use egui_phosphor::regular as icon;
 use hidapi::HidApi;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -1308,7 +1308,8 @@ fn device_chip(ui: &mut Ui, glyph: &str, name: &str, status: String, color: Colo
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = &root.ctx().clone();
         while let Ok(msg) = self.rx.try_recv() {
             self.handle(msg);
         }
@@ -1349,21 +1350,21 @@ impl eframe::App for App {
             self.apply(ctx);
         }
 
-        egui::SidePanel::left("nav")
-            .exact_width(220.0)
+        egui::Panel::left("nav")
+            .exact_size(220.0)
             .resizable(false)
             .frame(egui::Frame::new().fill(PANEL).inner_margin(egui::Margin { left: 12, right: 12, top: 0, bottom: 0 }))
-            .show(ctx, |ui| self.sidebar(ui));
+            .show(root, |ui| self.sidebar(ui));
 
         if self.dirty() {
-            egui::TopBottomPanel::bottom("savebar")
+            egui::Panel::bottom("savebar")
                 .frame(
                     egui::Frame::new()
                         .fill(SURFACE)
                         .stroke(Stroke::new(1.0_f32, BORDER))
                         .inner_margin(egui::Margin::symmetric(24, 12)),
                 )
-                .show(ctx, |ui| {
+                .show(root, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(icon::PENCIL_SIMPLE).size(16.0).color(ACCENT));
                         ui.label(RichText::new("Unsaved changes").color(TEXT));
@@ -1391,9 +1392,9 @@ impl eframe::App for App {
                 });
         }
 
-        egui::CentralPanel::default()
+        egui::CentralPanel::no_frame()
             .frame(egui::Frame::new().fill(BG).inner_margin(egui::Margin { left: 32, right: 32, top: 28, bottom: 0 }))
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.set_max_width(ui.available_width().min(980.0));
                     match self.tab {
@@ -1415,7 +1416,7 @@ impl eframe::App for App {
             let age = at.elapsed().as_secs_f32();
             if age < 4.0 {
                 let alpha = (4.0 - age).min(1.0);
-                egui::Area::new(egui::Id::new("toast"))
+                egui::Area::new(egui::Id::unique("toast"))
                     .order(egui::Order::Foreground)
                     .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-24.0, if self.dirty() { -80.0 } else { -24.0 }))
                     .interactable(false)
