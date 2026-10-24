@@ -1,0 +1,11 @@
+# Let the logged-in user talk to Glorious devices without root.
+# Install: sudo cp packaging/70-glorious-linux.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+
+# Model O3/D3 mice, V3 wireless receiver and their bootloaders (VID 3794)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3794", TAG+="uaccess"
+# GMMK 3 / GMMK 3 HE keyboards (VID 342d)
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="342d", TAG+="uaccess"
+# nRF52 serial DFU bootloaders of the mouse and receiver (show up as /dev/ttyACM*)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="3794", TAG+="uaccess"
+# GD32 ROM USB-DFU bootloader of the receiver (used by dfu-util)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="28e9", ATTRS{idProduct}=="0189", TAG+="uaccess"

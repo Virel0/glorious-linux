@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Glorious
+GenericName=Mouse and keyboard settings
+Comment=Configure Glorious mice and check Glorious firmware
+Exec=glorious
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;
+StartupWMClass=glorious-linux

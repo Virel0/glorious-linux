@@ -1,0 +1,21 @@
+[package]
+name = "glorious-linux"
+version = "0.1.0"
+edition = "2021"
+description = "Configure Glorious Model O3/D3 mice and check Glorious firmware on Linux (GUI + CLI)"
+license = "MIT"
+repository = "https://github.com/Virel0/glorious-linux"
+
+[[bin]]
+name = "glorious"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+hidapi = { version = "2", default-features = false, features = ["linux-native"] }
+serde_json = "1"
+ureq = { version = "2", features = ["json"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+serde = { version = "1", features = ["derive"] }
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
