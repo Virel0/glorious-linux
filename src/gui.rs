@@ -2,13 +2,13 @@
 //! channel, so the window never blocks on the mouse's 30-200 ms report delays.
 use crate::firmware::{self, Part};
 use crate::gmmk3he;
+use crate::kb_gui::{Keyboard, Page};
 use crate::settings::{self, LightingSettings, Performance, Settings};
 use crate::theme::{self, *};
 use crate::v3::{key_names, Mouse, Snapshot, EFFECTS, FUNCTIONS};
 use eframe::egui::{self, Color32, RichText, Sense, Stroke, Ui};
 use egui_phosphor::regular as icon;
 use hidapi::HidApi;
-use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ const PRESET_COLORS: [[u8; 3]; 8] = [
 ];
 const AUTO_REFRESH: Duration = Duration::from_secs(60);
 const ASLEEP_RETRY: Duration = Duration::from_secs(3);
+const STAGE_POLL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Tab {
@@ -28,17 +29,28 @@ enum Tab {
     Performance,
     Lighting,
     Buttons,
+    Kb(Page),
     Firmware,
-    Keyboard,
 }
 
-const TABS: [(Tab, &str, &str); 6] = [
-    (Tab::Mouse, icon::MOUSE, "Overview"),
-    (Tab::Performance, icon::GAUGE, "Performance"),
-    (Tab::Lighting, icon::LIGHTBULB, "Lighting"),
-    (Tab::Buttons, icon::CURSOR_CLICK, "Buttons"),
-    (Tab::Firmware, icon::DOWNLOAD_SIMPLE, "Firmware"),
-    (Tab::Keyboard, icon::KEYBOARD, "Keyboard"),
+/// Sidebar entry: (tab, icon, label).
+type NavEntry = (Tab, &'static str, &'static str);
+
+/// Sidebar sections: (heading, entries).
+const NAV: [(&str, &[NavEntry]); 3] = [
+    ("MOUSE", &[
+        (Tab::Mouse, icon::MOUSE, "Overview"),
+        (Tab::Performance, icon::GAUGE, "Performance"),
+        (Tab::Lighting, icon::LIGHTBULB, "Lighting"),
+        (Tab::Buttons, icon::CURSOR_CLICK, "Buttons"),
+    ]),
+    ("KEYBOARD", &[
+        (Tab::Kb(Page::Home), icon::KEYBOARD, "Keyboard"),
+        (Tab::Kb(Page::Lighting), icon::PALETTE, "Key lighting"),
+        (Tab::Kb(Page::Actuation), icon::SLIDERS, "Actuation"),
+        (Tab::Kb(Page::Keymap), icon::CURSOR_CLICK, "Keymap"),
+    ]),
+    ("UPDATES", &[(Tab::Firmware, icon::DOWNLOAD_SIMPLE, "Firmware")]),
 ];
 
 enum Applied {
@@ -48,12 +60,13 @@ enum Applied {
 }
 
 enum Msg {
-    Snapshot(Result<Snapshot, String>),
+    Snapshot(Result<Box<(Snapshot, Settings)>, String>),
+    ActiveStage(Result<u8, String>),
     Applied(Result<Applied, String>),
     FwStatus(Result<(firmware::Status, Vec<&'static str>), String>),
     FwLog(String),
     FwDone(Result<(), String>),
-    Keyboard(Result<gmmk3he::Info, String>),
+    KbFirmware(Result<Vec<gmmk3he::Component>, String>),
 }
 
 /// Why the mouse is not answering, from the error text.
@@ -71,12 +84,17 @@ pub struct App {
     tab: Tab,
     mouse_busy: bool,
     last_refresh: Instant,
+    /// Live DPI-stage polling (separate from `mouse_busy` so it never greys out the UI).
+    polling_stage: bool,
+    stage_poll_failures: u32,
+    last_stage_poll: Instant,
+    /// False until the first successful read, so the editors don't show placeholder values.
+    settings_loaded: bool,
     snapshot: Option<Snapshot>,
     mouse_error: Option<String>,
     /// Last values known to be on the mouse, and the values being edited.
     saved: Settings,
     draft: Settings,
-    have_saved_file: bool,
     toast: Option<(String, bool, Instant)>,
     fw_busy: bool,
     fw_status: Option<firmware::Status>,
@@ -88,9 +106,8 @@ pub struct App {
     fw_force: bool,
     fw_confirm: bool,
     flashing: bool,
-    kb_busy: bool,
-    kb: Option<gmmk3he::Info>,
-    kb_error: Option<String>,
+    keyboard: Keyboard,
+    kb_fw_busy: bool,
     keys: Vec<(String, u8)>,
 }
 
@@ -160,16 +177,6 @@ fn battery_color(level: u8) -> Color32 {
     }
 }
 
-fn keyboard_app() -> Option<PathBuf> {
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    let candidates = [
-        std::env::current_exe().ok().map(|p| p.with_file_name("inglorious-core")),
-        Some(home.join(".local/bin/inglorious-core")),
-        Some(home.join(".cargo/bin/inglorious-core")),
-    ];
-    candidates.into_iter().flatten().find(|p| p.is_file()).or_else(|| firmware::which("inglorious-core"))
-}
-
 /// Animated approximation of the selected effect.
 fn lighting_preview(ui: &mut Ui, l: &LightingSettings) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 64.0), Sense::hover());
@@ -209,20 +216,22 @@ fn lighting_preview(ui: &mut Ui, l: &LightingSettings) {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> App {
         theme::install(&cc.egui_ctx);
-        let loaded = Settings::load();
         let (tx, rx) = channel();
-        let saved = loaded.clone().unwrap_or_default();
+        let saved = Settings::default();
         let mut app = App {
             tx,
             rx,
             tab: Tab::Mouse,
             mouse_busy: false,
             last_refresh: Instant::now(),
+            polling_stage: false,
+            stage_poll_failures: 0,
+            last_stage_poll: Instant::now(),
+            settings_loaded: false,
             snapshot: None,
             mouse_error: None,
             draft: saved.clone(),
             saved,
-            have_saved_file: loaded.is_some(),
             toast: None,
             fw_busy: false,
             fw_status: None,
@@ -234,13 +243,11 @@ impl App {
             fw_force: false,
             fw_confirm: false,
             flashing: false,
-            kb_busy: false,
-            kb: None,
-            kb_error: None,
+            keyboard: Keyboard::new(),
+            kb_fw_busy: false,
             keys: key_names(),
         };
         app.refresh_mouse(&cc.egui_ctx);
-        app.refresh_keyboard(&cc.egui_ctx);
         app
     }
 
@@ -267,13 +274,23 @@ impl App {
     }
 
     fn refresh_mouse(&mut self, ctx: &egui::Context) {
-        self.with_mouse(ctx, |m| m.snapshot(), Msg::Snapshot);
+        self.with_mouse(ctx, |m| Ok(Box::new((m.snapshot()?, settings::read(m)?))), Msg::Snapshot);
     }
 
-    fn refresh_keyboard(&mut self, ctx: &egui::Context) {
-        self.kb_busy = true;
+    /// Follow DPI-button presses: ask the mouse which stage it is using.
+    fn poll_stage(&mut self, ctx: &egui::Context) {
+        self.polling_stage = true;
+        self.last_stage_poll = Instant::now();
         self.spawn(ctx, |tx, _| {
-            let _ = tx.send(Msg::Keyboard(gmmk3he::read().map_err(|e| format!("{e:#}"))));
+            let r = HidApi::new().map_err(anyhow::Error::from).and_then(|api| Mouse::open(&api, false)?.active_stage_fast());
+            let _ = tx.send(Msg::ActiveStage(r.map_err(|e| format!("{e:#}"))));
+        });
+    }
+
+    fn check_keyboard_firmware(&mut self, ctx: &egui::Context, fw: String) {
+        self.kb_fw_busy = true;
+        self.spawn(ctx, move |tx, _| {
+            let _ = tx.send(Msg::KbFirmware(gmmk3he::compare(&fw).map_err(|e| format!("{e:#}"))));
         });
     }
 
@@ -312,6 +329,7 @@ impl App {
     /// Whether the current tab has unapplied edits.
     fn dirty(&self) -> bool {
         match self.tab {
+            Tab::Kb(page) => self.keyboard.dirty(page),
             Tab::Performance => self.draft.performance != self.saved.performance,
             Tab::Lighting => self.draft.lighting != self.saved.lighting,
             Tab::Buttons => self.draft.buttons != self.saved.buttons,
@@ -319,8 +337,20 @@ impl App {
         }
     }
 
+    fn busy(&self) -> bool {
+        match self.tab {
+            Tab::Kb(_) => self.keyboard.busy,
+            _ => self.mouse_busy || self.flashing,
+        }
+    }
+
     fn apply(&mut self, ctx: &egui::Context) {
         match self.tab {
+            Tab::Kb(page) => {
+                if let Err(e) = self.keyboard.apply(page) {
+                    self.toast(format!("Could not apply: {e}"), false);
+                }
+            }
             Tab::Performance => {
                 let (p, prev) = (self.draft.performance.clone(), self.saved.performance.clone());
                 if !p.stages.get(p.active).is_some_and(|s| s.enabled) {
@@ -343,6 +373,7 @@ impl App {
 
     fn revert(&mut self) {
         match self.tab {
+            Tab::Kb(page) => self.keyboard.revert(page),
             Tab::Performance => self.draft.performance = self.saved.performance.clone(),
             Tab::Lighting => self.draft.lighting = self.saved.lighting.clone(),
             Tab::Buttons => self.draft.buttons = self.saved.buttons.clone(),
@@ -355,28 +386,43 @@ impl App {
             Msg::Snapshot(r) => {
                 self.mouse_busy = false;
                 match r {
-                    Ok(s) => {
+                    Ok(both) => {
+                        let (s, device) = *both;
                         self.mouse_error = None;
-                        // Values the mouse can report override the saved copy.
-                        let l = &s.lighting;
-                        let device_lighting = LightingSettings {
-                            effect: EFFECTS.iter().find(|e| e.1 == l.effect).map_or("rainbow", |e| e.0).to_string(),
-                            brightness: l.wired_brightness,
-                            wireless_brightness: l.wireless_brightness,
-                            speed: l.speed,
-                            ..self.saved.lighting.clone()
-                        };
-                        if self.draft.lighting == self.saved.lighting {
-                            self.draft.lighting = device_lighting.clone();
+                        // The mouse is the source of truth; keep edits the user hasn't applied yet.
+                        let first = !self.settings_loaded;
+                        if first || self.draft.performance == self.saved.performance {
+                            self.draft.performance = device.performance.clone();
                         }
-                        self.saved.lighting = device_lighting;
-                        if self.draft.performance.sleep_minutes == self.saved.performance.sleep_minutes {
-                            self.draft.performance.sleep_minutes = s.sleep_minutes;
+                        if first || self.draft.lighting == self.saved.lighting {
+                            self.draft.lighting = device.lighting.clone();
                         }
-                        self.saved.performance.sleep_minutes = s.sleep_minutes;
+                        if first || self.draft.buttons == self.saved.buttons {
+                            self.draft.buttons = device.buttons.clone();
+                        }
+                        self.saved = device;
+                        self.settings_loaded = true;
                         self.snapshot = Some(s);
                     }
                     Err(e) => self.mouse_error = Some(e),
+                }
+            }
+            Msg::ActiveStage(r) => {
+                self.polling_stage = false;
+                // A few stale replies are normal; a long run means the mouse fell asleep.
+                self.stage_poll_failures = if r.is_ok() { 0 } else { self.stage_poll_failures + 1 };
+                if self.stage_poll_failures >= 12 {
+                    self.stage_poll_failures = 0;
+                    self.last_refresh = Instant::now() - AUTO_REFRESH;
+                }
+                if let Ok(stage) = r {
+                    let stage = stage as usize;
+                    if self.settings_loaded && stage != self.saved.performance.active {
+                        if self.draft.performance.active == self.saved.performance.active {
+                            self.draft.performance.active = stage;
+                        }
+                        self.saved.performance.active = stage;
+                    }
                 }
             }
             Msg::Applied(r) => {
@@ -397,11 +443,7 @@ impl App {
                                 "Button"
                             }
                         };
-                        self.have_saved_file = true;
-                        match self.saved.save() {
-                            Ok(()) => self.toast(format!("{what} settings saved to the mouse"), true),
-                            Err(e) => self.toast(format!("{what} settings applied, but saving them failed: {e}"), false),
-                        }
+                        self.toast(format!("{what} settings saved to the mouse"), true);
                     }
                     Err(e) => {
                         self.toast(format!("Could not apply: {e}"), false);
@@ -430,14 +472,10 @@ impl App {
                     }
                 }
             }
-            Msg::Keyboard(r) => {
-                self.kb_busy = false;
-                match r {
-                    Ok(i) => {
-                        self.kb = Some(i);
-                        self.kb_error = None;
-                    }
-                    Err(e) => self.kb_error = Some(e),
+            Msg::KbFirmware(r) => {
+                self.kb_fw_busy = false;
+                if let Ok(c) = r {
+                    self.keyboard.components = Some(c);
                 }
             }
         }
@@ -456,17 +494,26 @@ impl App {
                 ui.label(RichText::new("for Linux").size(12.0).color(FAINT));
             });
         });
-        ui.add_space(26.0);
+        ui.add_space(18.0);
         ui.spacing_mut().item_spacing.y = 4.0;
-        for (tab, glyph, label) in TABS {
-            if nav_item(ui, glyph, label, self.tab == tab).clicked() {
-                self.tab = tab;
+        for (heading, entries) in NAV {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.add_space(16.0);
+                ui.label(RichText::new(heading).size(11.0).color(FAINT));
+            });
+            for &(tab, glyph, label) in entries {
+                if nav_item(ui, glyph, label, self.tab == tab).clicked() {
+                    self.tab = tab;
+                }
             }
         }
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.add_space(14.0);
-            if let Some(kb) = &self.kb {
-                device_chip(ui, icon::KEYBOARD, kb.name, "Connected".into(), OK);
+            if self.keyboard.connected {
+                device_chip(ui, icon::KEYBOARD, gmmk3he::NAME, "Connected".into(), OK);
+            } else {
+                device_chip(ui, icon::KEYBOARD, "Keyboard", "Not connected".into(), DIM);
             }
             match (&self.snapshot, mouse_state(&self.mouse_error)) {
                 (Some(s), MouseState::Ok) => {
@@ -503,17 +550,12 @@ impl App {
             let p = &self.saved.performance;
             let active = p.stages.get(p.active).map_or(0, |s| s.dpi);
             let enabled = p.stages.iter().filter(|s| s.enabled).count();
-            let known = self.have_saved_file;
             ui.columns(4, |cols| {
-                tile(&mut cols[0], icon::CROSSHAIR, "DPI", &if known { active.to_string() } else { "-".into() }, &if known { format!("stage {} of {enabled}", p.active + 1) } else { "not set here yet".into() });
-                tile(&mut cols[1], icon::PULSE, "Polling", &if known { format!("{} Hz", p.polling_wireless) } else { "-".into() }, "wireless");
+                tile(&mut cols[0], icon::CROSSHAIR, "DPI", &active.to_string(), &format!("stage {} of {enabled}", p.active + 1));
+                tile(&mut cols[1], icon::PULSE, "Polling", &format!("{} Hz", p.polling_wireless), "wireless");
                 tile(&mut cols[2], icon::LIGHTBULB, "Lighting", &effect_name(s.lighting.effect), &format!("{}% brightness", s.lighting.wireless_brightness));
                 tile(&mut cols[3], icon::MOON, "Sleep", &if s.sleep_minutes == 0 { "Never".into() } else { format!("{} min", s.sleep_minutes) }, "idle timeout");
             });
-            if !known {
-                ui.add_space(14.0);
-                info_banner(ui, "The mouse can't report its DPI, polling, debounce or button settings. Apply them once from the Performance and Buttons tabs and they'll show here.");
-            }
         }
         if refresh {
             self.refresh_mouse(ui.ctx());
@@ -586,6 +628,10 @@ impl App {
     }
 
     fn performance_tab(&mut self, ui: &mut Ui) {
+        if !self.settings_loaded {
+            self.mouse_problem(ui, &mouse_state(&self.mouse_error));
+            return;
+        }
         let mut reset = false;
         page_header(ui, "Performance", "Sensitivity, polling and power", |ui| {
             reset = ui.button(format!("{}  Glorious defaults", icon::ARROW_COUNTER_CLOCKWISE)).clicked();
@@ -669,6 +715,10 @@ impl App {
     }
 
     fn lighting_tab(&mut self, ui: &mut Ui) {
+        if !self.settings_loaded {
+            self.mouse_problem(ui, &mouse_state(&self.mouse_error));
+            return;
+        }
         page_header(ui, "Lighting", "Effect, brightness and colour", |_| {});
         let l = &mut self.draft.lighting;
         egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(14).inner_margin(12).show(ui, |ui| {
@@ -726,6 +776,10 @@ impl App {
     }
 
     fn buttons_tab(&mut self, ui: &mut Ui) {
+        if !self.settings_loaded {
+            self.mouse_problem(ui, &mouse_state(&self.mouse_error));
+            return;
+        }
         let mut reset = false;
         page_header(ui, "Buttons", "What each button does", |ui| {
             reset = ui.button(format!("{}  Glorious defaults", icon::ARROW_COUNTER_CLOCKWISE)).clicked();
@@ -771,7 +825,7 @@ impl App {
 
     fn firmware_tab(&mut self, ui: &mut Ui) {
         let mut check = false;
-        page_header(ui, "Firmware", "Mouse and receiver updates from Glorious", |ui| {
+        page_header(ui, "Firmware", "Updates from Glorious for your mouse, receiver and keyboard", |ui| {
             check = ui.add_enabled(!self.fw_busy && !self.flashing, egui::Button::new(format!("{}  Check again", icon::ARROW_CLOCKWISE))).clicked();
             if self.fw_busy {
                 ui.spinner();
@@ -844,6 +898,25 @@ impl App {
                 ui.label(RichText::new("Checking your devices and Glorious' latest release...").color(DIM));
             });
         }
+        if let Some(components) = &self.keyboard.components {
+            card(ui, icon::KEYBOARD, gmmk3he::NAME, |ui| {
+                for c in components {
+                    egui::Frame::new().fill(SURFACE2).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let name = match c.name { "device" => "Main firmware", "rf" => "Wireless chip", _ => "Lighting chip" };
+                            ui.add_sized([140.0, 24.0], egui::Label::new(RichText::new(name).color(TEXT)));
+                            ui.label(RichText::new(format!("installed {:04x}", c.installed)).color(DIM));
+                            ui.label(RichText::new(format!("latest {}", c.latest_display())).color(FAINT));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| status_pill(ui, c.outdated()));
+                        });
+                    });
+                }
+                if components.iter().any(|c| c.outdated()) {
+                    ui.label(RichText::new("Keyboard updates still need Glorious CORE on Windows.").color(DIM));
+                }
+            });
+        }
         if !self.fw_log.is_empty() {
             card(ui, icon::WAVEFORM, "Log", |ui| {
                 egui::Frame::new().fill(PANEL).corner_radius(10).inner_margin(12).show(ui, |ui| {
@@ -864,69 +937,6 @@ impl App {
             self.flash(ui.ctx());
         }
     }
-
-    fn keyboard_tab(&mut self, ui: &mut Ui) {
-        let mut refresh = false;
-        page_header(ui, "Keyboard", "GMMK 3 HE status and configuration", |ui| {
-            refresh = ui.add_enabled(!self.kb_busy, egui::Button::new(format!("{}  Refresh", icon::ARROW_CLOCKWISE))).clicked();
-            if self.kb_busy {
-                ui.spinner();
-            }
-        });
-        if let Some(e) = &self.kb_error {
-            info_banner(ui, &format!("{} {e}", icon::WARNING));
-            ui.add_space(14.0);
-        }
-        if let Some(kb) = &self.kb {
-            egui::Frame::new().fill(SURFACE).stroke(Stroke::new(1.0_f32, BORDER)).corner_radius(16).inner_margin(24).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(RichText::new(kb.name).family(heading_family()).size(28.0).color(TEXT));
-                ui.horizontal(|ui| {
-                    pill(ui, icon::CHECK_CIRCLE, "Connected", OK);
-                    pill(ui, "", &format!("Profile {}  -  layer {}", kb.profile + 1, kb.layer + 1), ACCENT);
-                });
-                ui.add_space(10.0);
-                for c in &kb.components {
-                    egui::Frame::new().fill(SURFACE2).corner_radius(10).inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let name = match c.name { "device" => "Main firmware", "rf" => "Wireless chip", _ => "Lighting chip" };
-                            ui.add_sized([140.0, 24.0], egui::Label::new(RichText::new(name).color(TEXT)));
-                            ui.label(RichText::new(format!("installed {:04x}", c.installed)).color(DIM));
-                            ui.label(RichText::new(format!("latest {}", c.latest_display())).color(FAINT));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| status_pill(ui, c.outdated()));
-                        });
-                    });
-                    ui.add_space(2.0);
-                }
-                if kb.components.iter().any(|c| c.outdated()) {
-                    ui.label(RichText::new("Keyboard updates still need Glorious CORE on Windows.").color(DIM));
-                }
-            });
-            ui.add_space(14.0);
-        }
-        card(ui, icon::SLIDERS, "Lighting, actuation and keymap", |ui| {
-            ui.label(RichText::new("Per-key RGB, actuation points, rapid trigger and the keymap are configured in inglorious-core-linux.").color(DIM));
-            ui.add_space(4.0);
-            match keyboard_app() {
-                Some(path) => {
-                    if primary(ui, true, &format!("{}  Open keyboard configurator", icon::ARROW_SQUARE_OUT)) {
-                        match std::process::Command::new(&path).spawn() {
-                            Ok(_) => self.toast("Keyboard configurator started", true),
-                            Err(e) => self.toast(format!("Could not start {}: {e}", path.display()), false),
-                        }
-                    }
-                }
-                None => {
-                    info_banner(ui, &format!("{} inglorious-core isn't installed. Re-run the installer and answer yes to the keyboard configurator.", icon::INFO));
-                    ui.hyperlink_to("github.com/tg5ee/inglorious-core-linux", "https://github.com/tg5ee/inglorious-core-linux");
-                }
-            }
-        });
-        if refresh {
-            self.refresh_keyboard(ui.ctx());
-        }
-    }
 }
 
 fn device_chip(ui: &mut Ui, glyph: &str, name: &str, status: String, color: Color32) {
@@ -943,33 +953,33 @@ fn device_chip(ui: &mut Ui, glyph: &str, name: &str, status: String, color: Colo
     });
 }
 
-fn info_banner(ui: &mut Ui, text: &str) {
-    egui::Frame::new()
-        .fill(ACCENT.gamma_multiply(0.08))
-        .stroke(Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.3)))
-        .corner_radius(10)
-        .inner_margin(egui::Margin::symmetric(14, 10))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(text).color(TEXT));
-        });
-}
-
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(msg) = self.rx.try_recv() {
             self.handle(msg);
+        }
+        for (text, ok) in self.keyboard.poll(self.tab == Tab::Kb(Page::Actuation)) {
+            self.toast(text, ok);
+        }
+        if let (Some(fw), None, false) = (self.keyboard.fw.clone(), &self.keyboard.components, self.kb_fw_busy) {
+            self.check_keyboard_firmware(ctx, fw);
         }
         // Keep the battery fresh, and reconnect on its own once a sleeping mouse wakes up.
         let wait = if self.mouse_error.is_some() { ASLEEP_RETRY } else { AUTO_REFRESH };
         if !self.mouse_busy && !self.flashing && self.last_refresh.elapsed() >= wait {
             self.refresh_mouse(ctx);
         }
-        ctx.request_repaint_after(Duration::from_secs(1));
+        let live_tab = matches!(self.tab, Tab::Mouse | Tab::Performance);
+        if live_tab && self.settings_loaded && self.mouse_error.is_none() && !self.mouse_busy && !self.flashing
+            && !self.polling_stage && self.last_stage_poll.elapsed() >= STAGE_POLL
+        {
+            self.poll_stage(ctx);
+        }
+        ctx.request_repaint_after(if live_tab { STAGE_POLL } else { Duration::from_secs(1) });
         if self.tab == Tab::Firmware && self.fw_status.is_none() && self.fw_error.is_none() && !self.fw_busy {
             self.check_firmware(ctx);
         }
-        if self.dirty() && !self.mouse_busy && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
+        if self.dirty() && !self.busy() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) {
             self.apply(ctx);
         }
 
@@ -988,13 +998,17 @@ impl eframe::App for App {
                         ui.label(RichText::new("Unsaved changes").color(TEXT));
                         ui.label(RichText::new("Ctrl+S").size(12.0).color(FAINT));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if primary(ui, !self.mouse_busy && !self.flashing, "Apply to mouse") {
+                            let target = if matches!(self.tab, Tab::Kb(_)) { "Apply to keyboard" } else { "Apply to mouse" };
+                            let busy = self.busy();
+                            if primary(ui, !busy, target) {
                                 self.apply(ctx);
                             }
-                            if ui.add_enabled(!self.mouse_busy, egui::Button::new("Revert").min_size(egui::vec2(90.0, 34.0))).clicked() {
+                            if ui.add_enabled(!busy, egui::Button::new("Revert").min_size(egui::vec2(90.0, 34.0))).clicked() {
                                 self.revert();
                             }
-                            if self.mouse_busy {
+                            if let (Tab::Kb(_), Some((i, n))) = (self.tab, self.keyboard.progress()) {
+                                ui.add(egui::ProgressBar::new(i as f32 / n as f32).desired_width(140.0));
+                            } else if busy {
                                 ui.spinner();
                             }
                         });
@@ -1013,7 +1027,10 @@ impl eframe::App for App {
                         Tab::Lighting => self.lighting_tab(ui),
                         Tab::Buttons => self.buttons_tab(ui),
                         Tab::Firmware => self.firmware_tab(ui),
-                        Tab::Keyboard => self.keyboard_tab(ui),
+                        Tab::Kb(Page::Home) => self.keyboard.home(ui),
+                        Tab::Kb(Page::Lighting) => self.keyboard.lighting(ui),
+                        Tab::Kb(Page::Actuation) => self.keyboard.actuation(ui),
+                        Tab::Kb(Page::Keymap) => self.keyboard.keymap(ui),
                     }
                     ui.add_space(24.0);
                 });

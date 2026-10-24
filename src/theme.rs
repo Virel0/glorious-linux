@@ -275,3 +275,16 @@ pub fn swatch(ui: &mut Ui, color: [u8; 3], selected: bool) -> bool {
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
 }
+
+/// Highlighted note inside a page.
+pub fn info_banner(ui: &mut Ui, text: &str) {
+    egui::Frame::new()
+        .fill(ACCENT.gamma_multiply(0.08))
+        .stroke(Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.3)))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(text).color(TEXT));
+        });
+}

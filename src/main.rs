@@ -4,6 +4,9 @@ mod firmware;
 mod gmmk3he;
 mod gui;
 mod hid;
+mod kb_gui;
+mod keybed;
+mod nordic_dfu;
 mod settings;
 mod theme;
 mod v3;
@@ -102,6 +105,19 @@ enum MouseCmd {
     },
     /// Remap a button (left, right, middle, forward, back, dpi) to a mouse function or key:<name|hex usage>
     Bind { button: String, action: String },
+    /// Print the active DPI stage whenever it changes (Ctrl+C to stop)
+    #[command(hide = true)]
+    WatchDpi,
+    /// Send one raw command and print the reply (protocol debugging)
+    #[command(hide = true)]
+    Raw {
+        /// "mouse" (0xBB) or "receiver" (0xAA)
+        target: String,
+        /// Command byte, hex
+        cmd: String,
+        /// Payload bytes, hex
+        payload: Vec<String>,
+    },
     /// Check for or install mouse/receiver firmware
     Firmware {
         #[command(subcommand)]
@@ -153,6 +169,23 @@ fn mouse_info(m: &Mouse) -> Result<()> {
     let l = m.lighting()?;
     let effect = EFFECTS.iter().find(|e| e.1 == l.effect).map_or(l.effect.to_string(), |e| e.0.to_string());
     println!("Lighting:    {effect}, brightness {}/{}, speed {}", l.wired_brightness, l.wireless_brightness, l.speed);
+    let s = settings::read(m)?;
+    let p = &s.performance;
+    let stages: Vec<String> = p
+        .stages
+        .iter()
+        .enumerate()
+        .map(|(i, st)| {
+            let mark = if i == p.active { "*" } else { "" };
+            if st.enabled { format!("{mark}{}", st.dpi) } else { "off".into() }
+        })
+        .collect();
+    println!("DPI stages:  {}   (* = active)", stages.join(" / "));
+    println!("Polling:     {} Hz wireless, {} Hz cable", p.polling_wireless, p.polling_wired);
+    println!("Lift-off:    {} mm   Motion sync: {}", ["0.7", "1", "2"].get(p.lift_off as usize).unwrap_or(&"?"), if p.motion_sync { "on" } else { "off" });
+    println!("Debounce:    {} ms mechanical, {} ms optical", p.debounce_mechanical, p.debounce_optical);
+    let buttons: Vec<String> = s.buttons.iter().map(|(b, a)| format!("{b}={a}")).collect();
+    println!("Buttons:     {}", buttons.join(", "));
     let (sleep_ms, _) = m.power_saving()?;
     if sleep_ms == 0 {
         println!("Sleep after: disabled");
@@ -234,6 +267,33 @@ fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
             }
             settings::apply_button(&m, &button, &action)?;
             println!("{button} -> {action}");
+        }
+        MouseCmd::WatchDpi => {
+            let mut last = None;
+            let start = std::time::Instant::now();
+            let (mut polls, mut errors) = (0u32, 0u32);
+            loop {
+                polls += 1;
+                match m.active_stage_fast() {
+                    Ok(s) if Some(s) != last => {
+                        println!("{:>7.2}s  stage {}  ({polls} polls, {errors} errors)", start.elapsed().as_secs_f32(), s + 1);
+                        last = Some(s);
+                    }
+                    Ok(_) => {}
+                    Err(_) => errors += 1,
+                }
+                if polls % 40 == 0 {
+                    eprintln!("{:>7.2}s  {polls} polls, {errors} errors", start.elapsed().as_secs_f32());
+                }
+            }
+        }
+        MouseCmd::Raw { target, cmd, payload } => {
+            let target = if target == "receiver" { v3::RECEIVER } else { v3::MOUSE };
+            let cmd = u8::from_str_radix(cmd.trim_start_matches("0x"), 16)?;
+            let payload: Vec<u8> = payload.iter().map(|b| u8::from_str_radix(b.trim_start_matches("0x"), 16)).collect::<Result<_, _>>()?;
+            let reply = m.query(target, cmd, &payload)?;
+            let end = reply.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+            println!("{:02x}: {}", cmd, reply[..end.max(1)].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "));
         }
         MouseCmd::Firmware { .. } => unreachable!(),
     }

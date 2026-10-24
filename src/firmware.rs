@@ -2,11 +2,11 @@
 //!
 //! Re-implements CORE 2.1.23's v3-updater (updateMouse.exe / updateDongle.exe); the byte
 //! sequences were captured by running those updaters against a mocked node-hid:
-//!   mouse    : HID enter-DFU -> nRF52 serial bootloader -> `nrfutil dfu serial`
-//!   receiver : HID enter-DFU (nRF52) -> `nrfutil dfu serial` -> HID exit-DFU,
+//!   mouse    : HID enter-DFU -> nRF52 serial bootloader -> Nordic serial DFU (nordic_dfu.rs)
+//!   receiver : HID enter-DFU (nRF52) -> Nordic serial DFU -> HID exit-DFU,
 //!              HID enter-DFU (GD32) -> GigaDevice ROM DFU -> `dfu-util`
 //! Progress goes through a `log` callback so the CLI and the GUI share this code.
-use crate::hid;
+use crate::{hid, nordic_dfu};
 use crate::v3::{self, Mouse, MOUSE, RECEIVER, REPORT_ID, REPORT_LEN, VID};
 use anyhow::{anyhow, bail, Context, Result};
 use hidapi::HidApi;
@@ -107,19 +107,10 @@ pub fn which(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH")?.to_str()?.split(':').map(|d| Path::new(d).join(name)).find(|p| p.is_file())
 }
 
-/// nrfutil 7+ ships the nRF5 SDK DFU code as `nrf5sdk-tools`; 6.x had it at top level.
-fn nrfutil() -> Option<Vec<String>> {
-    let exe = which("nrfutil")?.to_string_lossy().into_owned();
-    let new = Command::new(&exe).args(["nrf5sdk-tools", "dfu", "serial", "--help"]).output();
-    Some(if new.map(|o| o.status.success()).unwrap_or(false) { vec![exe, "nrf5sdk-tools".into()] } else { vec![exe] })
-}
-
-/// Missing external tools for the given plan, as install hints.
+/// Missing external tools for the given plan, as install hints. The nRF52 parts are flashed by
+/// the built-in Nordic DFU; only the receiver's GD32 chip needs dfu-util.
 pub fn missing_tools(receiver: bool) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if nrfutil().is_none() {
-        missing.push("nrfutil (`paru -S nrfutil`, then `nrfutil install nrf5sdk-tools`)");
-    }
     if receiver && which("dfu-util").is_none() {
         missing.push("dfu-util (`sudo pacman -S dfu-util`)");
     }
@@ -206,6 +197,23 @@ impl Flasher<'_> {
         Ok(())
     }
 
+    /// Flash a Nordic DFU package through the serial bootloader that appeared on `port`.
+    fn nordic(&self, port: &str, package: &str, opts: nordic_dfu::Options) -> Result<()> {
+        let pkg = nordic_dfu::Package::load(Path::new(package))?;
+        let name = Path::new(package).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        (self.log)(format!(
+            "  Nordic DFU {name} via {port}: init packet {} bytes, firmware {} bytes, receipt every {} packets",
+            pkg.init.len(),
+            pkg.firmware.len(),
+            opts.prn
+        ));
+        if self.dry {
+            return Ok(());
+        }
+        nordic_dfu::flash(port, Path::new(package), opts, self.log)
+            .context("firmware transfer failed - the device stays in its bootloader, so it is safe to run this again")
+    }
+
     fn port(&self, pid: u16, what: &str) -> Result<String> {
         if self.dry {
             return Ok("/dev/ttyACM?".into());
@@ -213,7 +221,7 @@ impl Flasher<'_> {
         wait_for(what, 20, || hid::tty_for(VID, pid))
     }
 
-    fn mouse(&mut self, st: &Status, files: &Files, nrf: &[String]) -> Result<()> {
+    fn mouse(&mut self, st: &Status, files: &Files) -> Result<()> {
         (self.log)("[mouse] needs the USB cable plugged into the mouse".into());
         if !self.dry {
             let api = &mut self.api;
@@ -221,23 +229,20 @@ impl Flasher<'_> {
         }
         self.send_dfu(st.wired_pid, MOUSE, &[&DFU_MAGIC[..], &[0x01]].concat())?;
         let port = self.port(st.boot_pid, "the mouse bootloader")?;
-        let mut cmd = nrf.to_vec();
-        cmd.extend(["dfu", "serial", "--package", &files.mouse, "--port", &port, "--baud-rate", "115200"].map(String::from));
-        self.run(&cmd)
+        // CORE runs `nrfutil dfu serial --baud-rate 115200` with nrfutil's defaults otherwise.
+        let opts = nordic_dfu::Options { prn: 0, connect_delay: Duration::from_secs(3), timeout: Duration::from_secs(30) };
+        self.nordic(&port, &files.mouse, opts)
     }
 
-    fn receiver(&mut self, files: &Files, nrf: &[String]) -> Result<()> {
+    fn receiver(&mut self, files: &Files) -> Result<()> {
         let dfu = |sel: u8, enter: u8| [&DFU_MAGIC[..], &[sel, enter]].concat();
         (self.log)("[receiver] step 1/2: nRF52 radio".into());
         self.send_dfu(v3::PID_RECEIVER, RECEIVER, &dfu(SEL_NRF52, 1))?;
         let port = self.port(v3::PID_RECEIVER_BOOT, "the receiver nRF bootloader")?;
-        let mut cmd = nrf.to_vec();
-        cmd.extend(
-            ["dfu", "serial", "--package", &files.nrf, "--port", &port, "--flow-control", "0", "--connect-delay", "3",
-             "--packet-receipt-notification", "1", "--timeout", "60"]
-                .map(String::from),
-        );
-        self.run(&cmd)?;
+        // Same settings CORE passes to nrfutil for the receiver: a receipt after every packet,
+        // which paces the transfer through the receiver's USB-to-UART bridge.
+        let opts = nordic_dfu::Options { prn: 1, connect_delay: Duration::from_secs(3), timeout: Duration::from_secs(60) };
+        self.nordic(&port, &files.nrf, opts)?;
         self.wait_back(v3::PID_RECEIVER, "the receiver to come back")?;
         self.send_dfu(v3::PID_RECEIVER, RECEIVER, &dfu(SEL_NRF52, 0))?;
         if !self.dry {
@@ -306,14 +311,13 @@ pub fn flash(st: &Status, part: Part, force: bool, dry: bool, log: &dyn Fn(Strin
     if !dry && !missing.is_empty() {
         bail!("missing tools: {}", missing.join(", "));
     }
-    let nrf = nrfutil().unwrap_or_else(|| vec!["nrfutil".into()]);
     let files = fetch_bundle(&st.url, log)?;
     let mut f = Flasher { api: HidApi::new()?, dry, log };
     if do_mouse {
-        f.mouse(st, &files, &nrf)?;
+        f.mouse(st, &files)?;
     }
     if do_recv {
-        f.receiver(&files, &nrf)?;
+        f.receiver(&files)?;
     }
     log(if dry { "Dry run finished - nothing was sent.".into() } else { "Done. Check again to confirm the new versions.".into() });
     Ok(())

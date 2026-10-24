@@ -3,14 +3,12 @@
 pkgname=glorious-linux-git
 pkgver=0.2.0
 pkgrel=1
-pkgdesc="Configure Glorious mice (Model O3/D3) and check Glorious firmware on Linux - GUI + CLI"
+pkgdesc="Glorious mouse and keyboard software for Linux: Model O3/D3, GMMK 3 HE, firmware updates"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Virel0/glorious-linux"
 license=('MIT')
-depends=('gcc-libs' 'glibc' 'systemd-libs' 'hicolor-icon-theme' 'libxkbcommon' 'wayland' 'libglvnd')
+depends=('gcc-libs' 'glibc' 'systemd-libs' 'hicolor-icon-theme' 'libxkbcommon' 'wayland' 'libglvnd' 'dfu-util')
 makedepends=('cargo' 'git')
-optdepends=('dfu-util: receiver firmware updates'
-            'nrfutil: mouse and receiver firmware updates (AUR)')
 provides=('glorious-linux')
 conflicts=('glorious-linux')
 source=("$pkgname::git+$url.git")

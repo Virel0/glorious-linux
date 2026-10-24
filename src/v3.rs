@@ -42,6 +42,7 @@ const CMD_GET_DEVICE_INFO: u8 = 0x99;
 const RCMD_FIRMWARE: u8 = 0x80;
 const RCMD_FIRMWARE_2: u8 = 0xEE;
 const LOW_POWER_MS: u32 = 60_000;
+const GET: u8 = 0x80;
 
 pub const EFFECTS: [(&str, u8); 12] = [
     ("off", 0), ("rainbow", 1), ("breathing-single", 2), ("breathing", 3), ("seamless-breathing", 4),
@@ -54,7 +55,7 @@ pub const FUNCTIONS: [(&str, u8, u8, u8); 13] = [
     ("dpi-up", 8, 9, 0), ("dpi-down", 8, 10, 0), ("dpi-shift", 8, 14, 0), ("battery", 8, 6, 0),
     ("scroll-up", 2, 0, 0), ("scroll-down", 2, 1, 0), ("profile-cycle", 8, 2, 0), ("disable", 0, 0, 0),
 ];
-const FN_KEYBOARD: u8 = 4;
+pub const FN_KEYBOARD: u8 = 4;
 pub const DEFAULT_STAGE_COLORS: [[u8; 3]; 6] =
     [[0x64, 0x19, 0x00], [0, 0, 0xFF], [0xFF, 0, 0], [0, 0xFF, 0], [0x55, 0, 0xFF], [0, 0xFF, 0xFF]];
 
@@ -124,6 +125,8 @@ pub struct Lighting {
     pub wired_brightness: u8,
     pub wireless_brightness: u8,
     pub speed: u16,
+    /// `Some(rgb)` in single-colour mode, `None` for the effect's multicolour palette.
+    pub color: Option<[u8; 3]>,
 }
 
 /// Serialises access: two threads talking to the receiver at once garble each other's replies.
@@ -184,7 +187,12 @@ impl Mouse {
 
     /// Send a command and return the reply payload.
     pub fn query(&self, target: u8, cmd: u8, payload: &[u8]) -> Result<Vec<u8>> {
-        self.send(target, cmd, payload, 100)?;
+        self.query_after(target, cmd, payload, 100)
+    }
+
+    /// `query` with a custom wait between the request and reading the reply.
+    pub fn query_after(&self, target: u8, cmd: u8, payload: &[u8], wait_ms: u64) -> Result<Vec<u8>> {
+        self.send(target, cmd, payload, wait_ms)?;
         // A sleeping mouse makes the receiver return an empty report.
         let asleep = || anyhow::anyhow!("no reply from the mouse - it is probably asleep; move it and try again");
         let buf = hid::get_feature(&self.dev, REPORT_ID, REPORT_LEN).map_err(|_| asleep())?;
@@ -243,7 +251,54 @@ impl Mouse {
             wired_brightness: v[1],
             wireless_brightness: v[2],
             speed: u16::from_be_bytes([v[3], v[4]]),
+            color: (v[6] == 1).then_some([v[7], v[8], v[9]]),
         })
+    }
+
+    // Reads: every setter has a matching getter at `opcode | 0x80` (found by probing a D3;
+    // CORE itself only uses the battery, firmware, lighting and power-saving ones).
+
+    /// Index of the DPI stage the mouse is using right now.
+    pub fn active_stage(&self) -> Result<u8> {
+        Ok(self.query(MOUSE, CMD_DPI_ACTIVE | GET, &[])?[0])
+    }
+
+    /// Like `active_stage`, but quick enough to poll a few times a second.
+    pub fn active_stage_fast(&self) -> Result<u8> {
+        Ok(self.query_after(MOUSE, CMD_DPI_ACTIVE | GET, &[], 25)?[0])
+    }
+
+    /// `None` when the slot is switched off.
+    pub fn dpi_stage(&self, slot: u8) -> Result<Option<(u16, [u8; 3])>> {
+        let v = self.query(MOUSE, CMD_DPI_STAGE | GET, &[slot])?;
+        let dpi = u16::from_be_bytes([v[1], v[2]]);
+        Ok((dpi != 0).then_some((dpi, [v[3], v[4], v[5]])))
+    }
+
+    pub fn polling(&self, wireless: bool) -> Result<u16> {
+        let v = self.query(MOUSE, if wireless { CMD_POLL_WIRELESS } else { CMD_POLL_WIRED } | GET, &[])?;
+        Ok(u16::from_be_bytes([v[0], v[1]]))
+    }
+
+    pub fn lift_off(&self) -> Result<u8> {
+        Ok(self.query(MOUSE, CMD_LIFT_OFF | GET, &[])?[0])
+    }
+
+    /// (mechanical ms, optical ms)
+    pub fn debounce(&self) -> Result<(u8, u8)> {
+        let mech = self.query(MOUSE, CMD_DEBOUNCE_MECH | GET, &[])?[0];
+        let optical = self.query(MOUSE, CMD_DEBOUNCE_OPTICAL | GET, &[])?[0];
+        Ok((mech, optical))
+    }
+
+    pub fn motion_sync(&self) -> Result<bool> {
+        Ok(self.query(MOUSE, CMD_MOTION_SYNC | GET, &[])?[0] != 0)
+    }
+
+    /// (function type, arg1, arg2) as written by `bind`.
+    pub fn binding(&self, button: u8) -> Result<(u8, u8, u8)> {
+        let v = self.query(MOUSE, CMD_BUTTON | GET, &[button])?;
+        Ok((v[1], v[3], v[5]))
     }
 
     /// (sleep ms, low-power ms)

@@ -4,34 +4,30 @@
 #   ./install.sh                       from a clone or an unpacked release
 #   curl -fsSL https://raw.githubusercontent.com/Virel0/glorious-linux/main/install.sh | bash
 #
-# Installs `glorious` into ~/.local/bin, an app-menu entry and icon, and (with sudo, after
-# asking) the udev rule that lets your user talk to the devices. Builds from source when Rust
-# is available, otherwise downloads the latest release binary.
+# Installs `glorious` into ~/.local/bin with an app-menu entry and icon, then (with sudo, after
+# asking) the udev rule that lets your user talk to the devices and dfu-util, which flashes the
+# receiver's USB chip. Builds from source when Rust is available, otherwise downloads the latest
+# release binary. Mouse and keyboard configuration and the nRF52 firmware updater are built in.
 #
 # Options: --source | --binary   force how `glorious` is obtained
-#          --keyboard            also install the keyboard configurator (inglorious-core-linux)
-#          --no-keyboard         don't offer it
 #          --no-udev             skip the udev rule
+#          --no-deps             don't install dfu-util
 #          -y, --yes             answer yes to every question
 set -euo pipefail
 
 REPO="Virel0/glorious-linux"
-# inglorious-core-linux commit whose protocol was checked against Glorious CORE.
-KEYBOARD_REPO="https://github.com/tg5ee/inglorious-core-linux"
-KEYBOARD_REV="2bf5c6faecd7d7337e7f6e0e4e25dfb64524b9f3"
 PREFIX="${PREFIX:-$HOME/.local}"
 BIN="$PREFIX/bin"
 DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 RULE_DEST="/etc/udev/rules.d/70-glorious-linux.rules"
 
-mode="auto" keyboard="ask" udev=1 yes=0
+mode="auto" udev=1 deps=1 yes=0
 for arg in "$@"; do
     case "$arg" in
         --source) mode="source" ;;
         --binary) mode="binary" ;;
-        --keyboard) keyboard="yes" ;;
-        --no-keyboard) keyboard="no" ;;
         --no-udev) udev=0 ;;
+        --no-deps) deps=0 ;;
         -y|--yes) yes=1 ;;
         -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; exit 2 ;;
@@ -147,23 +143,23 @@ if [ "$udev" = 1 ]; then
     fi
 fi
 
-# ------------------------------------------------------------------ keyboard configurator
-if [ "$keyboard" = ask ]; then
-    if command -v inglorious-core >/dev/null || [ -x "$BIN/inglorious-core" ]; then
-        keyboard="no"
-    else
-        step "Keyboard configurator (optional)"
-        info "GMMK 3 HE lighting, actuation and keymap are set in inglorious-core-linux,"
-        info "a separate open-source project. It's built from source (needs Rust)."
-        ask "Install it too?" && keyboard="yes" || keyboard="no"
+# ------------------------------------------------------------------ dfu-util
+if [ "$deps" = 1 ] && ! command -v dfu-util >/dev/null; then
+    step "Firmware tools"
+    info "Receiver firmware updates use dfu-util for its USB chip (everything else is built in)."
+    if command -v pacman >/dev/null; then install_cmd=(sudo pacman -S --needed --noconfirm dfu-util)
+    elif command -v apt-get >/dev/null; then install_cmd=(sudo apt-get install -y dfu-util)
+    elif command -v dnf >/dev/null; then install_cmd=(sudo dnf install -y dfu-util)
+    elif command -v zypper >/dev/null; then install_cmd=(sudo zypper --non-interactive install dfu-util)
+    else install_cmd=()
     fi
-fi
-if [ "$keyboard" = yes ]; then
-    step "Installing the keyboard configurator"
-    have_cargo || die "the keyboard configurator needs Rust: 'sudo pacman -S rustup && rustup default stable'"
-    info "Building inglorious-core-linux at ${KEYBOARD_REV:0:7}..."
-    cargo install --quiet --locked --git "$KEYBOARD_REPO" --rev "$KEYBOARD_REV" --root "$PREFIX" inglorious-core
-    ok "inglorious-core -> $BIN/inglorious-core"
+    if [ "${#install_cmd[@]}" -eq 0 ]; then
+        info "Install 'dfu-util' with your package manager to enable receiver updates."
+    elif ask "Install dfu-util now (${install_cmd[*]})?"; then
+        "${install_cmd[@]}" && ok "dfu-util installed" || info "dfu-util install failed - receiver updates will ask for it."
+    else
+        info "Skipped. Receiver updates will ask for it."
+    fi
 fi
 
 # ------------------------------------------------------------------ done
@@ -176,4 +172,3 @@ case ":$PATH:" in
         info "  fish: fish_add_path $BIN     bash/zsh: echo 'export PATH=\"$BIN:\$PATH\"' >> ~/.bashrc"
         ;;
 esac
-info "Firmware updates also need: ${dim}nrfutil (AUR) + 'nrfutil install nrf5sdk-tools', and dfu-util${reset}"
