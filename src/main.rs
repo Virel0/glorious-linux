@@ -5,6 +5,7 @@ mod gmmk3he;
 mod gui;
 mod hid;
 mod settings;
+mod theme;
 mod v3;
 
 use anyhow::{bail, Result};

@@ -1,0 +1,34 @@
+# Builds a portable x86_64 binary (Ubuntu 22.04 glibc) and attaches it to the release for the
+# pushed tag. install.sh downloads it when Rust isn't available.
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          d=dist/glorious-linux
+          mkdir -p "$d/assets/fonts"
+          cp target/release/glorious install.sh uninstall.sh README.md LICENSE "$d/"
+          cp -r packaging "$d/"
+          cp assets/fonts/OFL-*.txt "$d/assets/fonts/"
+          tar -C dist -czf glorious-linux-x86_64-linux.tar.gz glorious-linux
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" glorious-linux-x86_64-linux.tar.gz --clobber

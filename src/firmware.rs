@@ -65,6 +65,7 @@ impl Status {
 
 pub fn status() -> Result<Status> {
     let api = HidApi::new()?;
+    // Read everything from the mouse first so its lock is released before the network fetch.
     let m = Mouse::open(&api, false)?;
     let name = m.model_name()?;
     let &(_, product, wired_pid, boot_pid) = v3::MODELS
@@ -80,6 +81,7 @@ pub fn status() -> Result<Status> {
     };
     let color = m.color()?;
     let mouse = m.firmware()?;
+    drop(m);
 
     // The manifest's version_receiver field is stale, so versions come from the bundle name:
     // `<Model>-<mouse>_<receiver A>-<receiver B>_<dock>.zip`.

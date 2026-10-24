@@ -5,6 +5,15 @@ A Rust GUI and CLI in a single `glorious` binary.
 
 > Unofficial. Not affiliated with or endorsed by Glorious. Use at your own risk.
 
+![Overview](docs/overview.png)
+
+<details>
+<summary>More screenshots</summary>
+
+![Performance](docs/performance.png)
+
+</details>
+
 ## Supported devices
 
 | Device | USB ID | Status |
@@ -15,7 +24,7 @@ A Rust GUI and CLI in a single `glorious` binary.
 
 Keyboard **configuration** (lighting, actuation, rapid trigger, keymap) is handled by
 [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux); the Keyboard tab
-launches it if `inglorious-core` is on your `PATH`.
+launches it when installed (the installer offers to).
 
 ## Features
 
@@ -34,33 +43,34 @@ Glorious CORE - the last applied values are stored in `~/.config/glorious-linux/
 
 ## Install
 
-Build dependencies: Rust (stable), `pkgconf`, `systemd-libs` (libudev), and the usual
-Wayland/X11 libraries. On Arch / CachyOS these are normally already present.
+One line (builds from source if you have Rust, otherwise downloads the release binary):
 
 ```sh
-git clone https://github.com/Virel0/glorious-linux
-cd glorious-linux
-cargo install --path .          # installs `glorious` into ~/.cargo/bin
+curl -fsSL https://raw.githubusercontent.com/Virel0/glorious-linux/main/install.sh | bash
 ```
 
-Give your user access to the devices (no root needed afterwards):
+Or from a clone:
 
 ```sh
-sudo cp packaging/70-glorious-linux.rules /etc/udev/rules.d/
-sudo udevadm control --reload && sudo udevadm trigger
+git clone https://github.com/Virel0/glorious-linux && cd glorious-linux && ./install.sh
 ```
 
-Then unplug and replug the receiver, mouse and keyboard.
+The installer puts `glorious` in `~/.local/bin`, adds **Glorious** to your app menu, asks
+before installing the udev rule (one `sudo`) that lets your user talk to the devices, and
+offers to install the keyboard configurator. Unplug and replug your devices afterwards.
+Run `./uninstall.sh` to remove it again.
 
-Optional desktop entry:
+**Arch / CachyOS / Manjaro** - build a proper package instead:
 
 ```sh
-cp packaging/glorious-linux.desktop ~/.local/share/applications/
+git clone https://github.com/Virel0/glorious-linux && cd glorious-linux/packaging/arch && makepkg -si
 ```
+
+The package installs the udev rule system-wide, so no extra steps are needed.
 
 ## Usage
 
-`glorious` with no arguments opens the GUI. The CLI covers the same ground:
+Open **Glorious** from your app menu, or run `glorious` with no arguments. The CLI covers the same ground:
 
 ```sh
 glorious mouse info

@@ -90,7 +90,6 @@ pub fn parse_key(s: &str) -> Result<u8> {
 /// Everything the mouse can report about itself.
 #[derive(Clone, Debug)]
 pub struct Snapshot {
-    pub path: String,
     pub via_receiver: bool,
     pub model: String,
     pub color: String,
@@ -127,7 +126,11 @@ pub struct Lighting {
     pub speed: u16,
 }
 
+/// Serialises access: two threads talking to the receiver at once garble each other's replies.
+static HID_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct Mouse {
+    _lock: std::sync::MutexGuard<'static, ()>,
     pub dev: hidapi::HidDevice,
     pub path: String,
     pub pid: u16,
@@ -137,9 +140,10 @@ pub struct Mouse {
 impl Mouse {
     /// Prefer a cable connection, then the receiver.
     pub fn open(api: &HidApi, verbose: bool) -> Result<Mouse> {
+        let lock = HID_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let pids: Vec<u16> = MODELS.iter().map(|m| m.2).chain([PID_RECEIVER]).collect();
         match hid::open(api, VID, &pids, 0xFF00, 0x01)? {
-            Some(o) => Ok(Mouse { dev: o.dev, path: o.path, pid: o.pid, verbose }),
+            Some(o) => Ok(Mouse { _lock: lock, dev: o.dev, path: o.path, pid: o.pid, verbose }),
             None => bail!("no Glorious Model O3/D3 or V3 receiver found"),
         }
     }
@@ -150,7 +154,6 @@ impl Mouse {
 
     pub fn snapshot(&self) -> Result<Snapshot> {
         Ok(Snapshot {
-            path: self.path.clone(),
             via_receiver: self.via_receiver(),
             model: self.model_name()?,
             color: self.color()?,
