@@ -202,56 +202,7 @@ pub fn worker() -> (Sender<Command>, Receiver<Event>) {
                 }
                 Ok(cmd) => {
                     let writing = matches!(cmd, Command::Write { .. });
-                    let result = (|| -> Result<()> {
-                        if transport.is_none() {
-                            transport = Some(Transport::open()?);
-                        }
-                        let t = transport.as_ref().unwrap();
-                        match cmd {
-                            Command::Shutdown => unreachable!("handled above"),
-                            Command::Info => {
-                                let _ = et.send(info(t)?);
-                            }
-                            Command::Live(enabled) => {
-                                ensure!(
-                                    !enabled || t.live_available(),
-                                    "live travel needs access to the keyboard's input interface"
-                                );
-                                if enabled {
-                                    t.live()?; // Discard packets left over from a previous live session.
-                                }
-                                t.send(&p::visualization(enabled))?;
-                                live = enabled;
-                            }
-                            Command::Write { mut reports, state } => {
-                                ensure!(!reports.is_empty(), "empty write");
-                                if let Some(s) = state.as_ref() {
-                                    s.validate()?;
-                                    // Un-indexed lighting/performance/mode writes must target the selected profile.
-                                    if reports[0][0] != 5 {
-                                        reports.insert(0, p::set_profile(s.profile, s.layer)?);
-                                    }
-                                }
-                                if reports.iter().any(|r| r[0] == 12) {
-                                    thread::sleep(COLOR_START_WAIT);
-                                }
-                                let n = reports.len();
-                                for (i, r) in reports.iter().enumerate() {
-                                    t.send(r)?;
-                                    let _ = et.send(Event::Progress(i + 1, n));
-                                }
-                                if reports[0][0] == 5 {
-                                    let _ = et.send(Event::ActiveSlot { profile: reports[0][1], layer: reports[0][2] });
-                                }
-                                if let Some(s) = state {
-                                    save_state_to(&s, &state_path()?)?;
-                                    let _ = et.send(Event::Saved(s));
-                                }
-                            }
-                        }
-                        Ok(())
-                    })();
-                    match result {
+                    match run(cmd, &mut transport, &mut live, &et) {
                         Ok(()) => {
                             let _ = et.send(Event::Done);
                         }
@@ -271,21 +222,77 @@ pub fn worker() -> (Sender<Command>, Receiver<Event>) {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
             }
             if live {
-                if let Some(t) = transport.as_ref() {
-                    match t.live() {
-                        Ok(Some(v)) => {
-                            let _ = et.send(Event::Live(v));
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            transport = None;
-                            live = false;
-                            let _ = et.send(Event::Error(format!("Live read stopped: {e}")));
-                        }
-                    }
-                }
+                poll_live(&mut transport, &mut live, &et);
             }
         }
     });
     (tx, er)
+}
+
+/// Carry out one command, opening the keyboard first if needed.
+fn run(cmd: Command, transport: &mut Option<Transport>, live: &mut bool, et: &Sender<Event>) -> Result<()> {
+    let t = match transport.take() {
+        Some(t) => transport.insert(t),
+        None => transport.insert(Transport::open()?),
+    };
+    match cmd {
+        Command::Shutdown => {} // The worker loop stops before getting here.
+        Command::Info => {
+            let _ = et.send(info(t)?);
+        }
+        Command::Live(enabled) => {
+            ensure!(!enabled || t.live_available(), "live travel needs access to the keyboard's input interface");
+            if enabled {
+                t.live()?; // Discard packets left over from a previous live session.
+            }
+            t.send(&p::visualization(enabled))?;
+            *live = enabled;
+        }
+        Command::Write { reports, state } => write(t, reports, state, et)?,
+    }
+    Ok(())
+}
+
+/// Send a batch of reports, then save `state` once the whole batch reached the board.
+fn write(t: &Transport, mut reports: Vec<Report>, state: Option<Box<State>>, et: &Sender<Event>) -> Result<()> {
+    ensure!(!reports.is_empty(), "empty write");
+    if let Some(s) = state.as_ref() {
+        s.validate()?;
+        // Un-indexed lighting/performance/mode writes must target the selected profile.
+        if reports[0][0] != 5 {
+            reports.insert(0, p::set_profile(s.profile, s.layer)?);
+        }
+    }
+    if reports.iter().any(|r| r[0] == 12) {
+        thread::sleep(COLOR_START_WAIT);
+    }
+    let n = reports.len();
+    for (i, r) in reports.iter().enumerate() {
+        t.send(r)?;
+        let _ = et.send(Event::Progress(i + 1, n));
+    }
+    if reports[0][0] == 5 {
+        let _ = et.send(Event::ActiveSlot { profile: reports[0][1], layer: reports[0][2] });
+    }
+    if let Some(s) = state {
+        save_state_to(&s, &state_path()?)?;
+        let _ = et.send(Event::Saved(s));
+    }
+    Ok(())
+}
+
+/// Forward the newest live-travel sample; a read error closes the keyboard and stops live mode.
+fn poll_live(transport: &mut Option<Transport>, live: &mut bool, et: &Sender<Event>) {
+    let Some(t) = transport.as_ref() else { return };
+    match t.live() {
+        Ok(Some(v)) => {
+            let _ = et.send(Event::Live(v));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            *transport = None;
+            *live = false;
+            let _ = et.send(Event::Error(format!("Live read stopped: {e}")));
+        }
+    }
 }

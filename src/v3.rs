@@ -5,13 +5,15 @@
 //! Reads are a SET_FEATURE followed ~100 ms later by a GET_FEATURE whose reply echoes the
 //! 4-byte header, for both the wired and the receiver path.
 use crate::hid;
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use hidapi::HidApi;
 use std::{thread::sleep, time::Duration};
 
 pub const VID: u16 = 0x3794;
 pub const REPORT_ID: u8 = 0x03;
+/// Target byte for commands to the mouse (relayed by the receiver when wireless).
 pub const MOUSE: u8 = 0xBB;
+/// Target byte for commands to the receiver itself.
 pub const RECEIVER: u8 = 0xAA;
 pub const REPORT_LEN: usize = 64;
 pub const PID_RECEIVER: u16 = 0xA300;
@@ -49,6 +51,7 @@ pub const EFFECTS: [(&str, u8); 12] = [
     ("off", 0), ("rainbow", 1), ("breathing-single", 2), ("breathing", 3), ("seamless-breathing", 4),
     ("solid", 5), ("fairies", 6), ("ghost", 7), ("cascade", 8), ("prismatic", 9), ("wave", 10), ("ripple", 11),
 ];
+/// Remappable buttons as (name, button index).
 pub const BUTTONS: [(&str, u8); 6] =
     [("left", 0), ("right", 1), ("middle", 2), ("forward", 7), ("back", 8), ("dpi", 19)];
 /// (name, function type, arg1, arg2) from CORE's MouseFunctionToHIDMap.
@@ -58,11 +61,13 @@ pub const FUNCTIONS: [(&str, u8, u8, u8); 13] = [
     ("dpi-up", 8, 9, 0), ("dpi-down", 8, 10, 0), ("dpi-shift", 8, 14, 0), ("battery", 8, 6, 0),
     ("scroll-up", 2, 0, 0), ("scroll-down", 2, 1, 0), ("profile-cycle", 8, 2, 0), ("disable", 0, 0, 0),
 ];
+/// Function type that makes a button send a keyboard key.
 pub const FN_KEYBOARD: u8 = 4;
 #[rustfmt::skip]
 pub const DEFAULT_STAGE_COLORS: [[u8; 3]; 6] =
     [[0x64, 0x19, 0x00], [0, 0, 0xFF], [0xFF, 0, 0], [0, 0xFF, 0], [0x55, 0, 0xFF], [0, 0xFF, 0xFF]];
 
+/// The value stored under `name` in a (name, value) table.
 pub fn lookup<T: Copy>(table: &[(&str, T)], name: &str) -> Option<T> {
     table.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)
 }
@@ -121,6 +126,32 @@ pub struct Snapshot {
     pub sleep_minutes: u32,
 }
 
+/// Build the feature report for one command.
+fn report(target: u8, cmd: u8, payload: &[u8]) -> Result<[u8; REPORT_LEN]> {
+    ensure!(payload.len() <= REPORT_LEN - 4, "payload of {} bytes does not fit in a report", payload.len());
+    let mut buf = [0u8; REPORT_LEN];
+    buf[..4].copy_from_slice(&[REPORT_ID, target, cmd, payload.len() as u8]);
+    buf[4..4 + payload.len()].copy_from_slice(payload);
+    Ok(buf)
+}
+
+/// The payload of a reply to `cmd`, zero-padded to the full report; `None` when the reply
+/// doesn't echo the command (a sleeping mouse makes the receiver return an empty report).
+fn reply_payload(buf: &[u8], cmd: u8) -> Option<Vec<u8>> {
+    if buf.len() < 4 || buf[2] != cmd {
+        return None;
+    }
+    let len = (buf[3] as usize).min(REPORT_LEN - 4).min(buf.len() - 4);
+    let mut payload = buf[4..4 + len].to_vec();
+    payload.resize(REPORT_LEN - 4, 0);
+    Some(payload)
+}
+
+/// "major.minor.patch" from the first three payload bytes.
+fn version(v: &[u8]) -> String {
+    format!("{}.{}.{}", v[0], v[1], v[2])
+}
+
 fn battery_status(code: u8) -> &'static str {
     match code {
         1 => "charging",
@@ -130,7 +161,7 @@ fn battery_status(code: u8) -> &'static str {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Battery {
     pub level: u8,
     pub status: &'static str,
@@ -139,7 +170,7 @@ pub struct Battery {
     pub secondary_status: &'static str,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Lighting {
     pub effect: u8,
     pub wired_brightness: u8,
@@ -149,9 +180,35 @@ pub struct Lighting {
     pub color: Option<[u8; 3]>,
 }
 
+impl Battery {
+    /// Two `[status, level %, millivolts (BE16)]` blocks; CORE shows the second as the battery.
+    fn parse(v: &[u8]) -> Battery {
+        Battery {
+            level: v[5],
+            status: battery_status(v[4]),
+            millivolts: u16::from_be_bytes([v[6], v[7]]),
+            secondary_level: v[1],
+            secondary_status: battery_status(v[0]),
+        }
+    }
+}
+
+impl Lighting {
+    fn parse(v: &[u8]) -> Lighting {
+        Lighting {
+            effect: v[0],
+            wired_brightness: v[1],
+            wireless_brightness: v[2],
+            speed: u16::from_be_bytes([v[3], v[4]]),
+            color: (v[6] == 1).then_some([v[7], v[8], v[9]]),
+        }
+    }
+}
+
 /// Serialises access: two threads talking to the receiver at once garble each other's replies.
 static HID_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// An open mouse or receiver; holds the HID lock until dropped.
 pub struct Mouse {
     _lock: std::sync::MutexGuard<'static, ()>,
     pub dev: hidapi::HidDevice,
@@ -176,10 +233,12 @@ impl Mouse {
         }
     }
 
+    /// True when talking to the mouse through the wireless receiver.
     pub fn via_receiver(&self) -> bool {
         self.pid == PID_RECEIVER
     }
 
+    /// Read everything the overview shows, one query after another.
     pub fn snapshot(&self) -> Result<Snapshot> {
         Ok(Snapshot {
             via_receiver: self.via_receiver(),
@@ -200,10 +259,9 @@ impl Mouse {
         }
     }
 
+    /// Send a command and wait `delay_ms` for the mouse to act on it.
     pub fn send(&self, target: u8, cmd: u8, payload: &[u8], delay_ms: u64) -> Result<()> {
-        let mut buf = [0u8; REPORT_LEN];
-        buf[..4].copy_from_slice(&[REPORT_ID, target, cmd, payload.len() as u8]);
-        buf[4..4 + payload.len()].copy_from_slice(payload);
+        let buf = report(target, cmd, payload)?;
         self.log(">>", &buf);
         hid::send_feature(&self.dev, &buf)?;
         sleep(Duration::from_millis(delay_ms));
@@ -222,21 +280,17 @@ impl Mouse {
         let asleep = || anyhow::anyhow!("no reply from the mouse - it is probably asleep; move it and try again");
         let buf = hid::get_feature(&self.dev, REPORT_ID, REPORT_LEN).map_err(|_| asleep())?;
         self.log("<<", &buf);
-        if buf[2] != cmd {
-            return Err(asleep());
-        }
-        let len = (buf[3] as usize).min(REPORT_LEN - 4);
-        let mut payload = buf[4..4 + len].to_vec();
-        payload.resize(REPORT_LEN - 4, 0);
-        Ok(payload)
+        reply_payload(&buf, cmd).ok_or_else(asleep)
     }
 
+    /// Raw model name, e.g. "MOUSE_D3_WIRELESS".
     pub fn model_name(&self) -> Result<String> {
         let v = self.query(MOUSE, CMD_GET_DEVICE_INFO, &[1])?;
         let end = v.iter().position(|&b| b == 0).unwrap_or(v.len()).min(30);
         Ok(String::from_utf8_lossy(&v[..end]).trim().to_string())
     }
 
+    /// Shell colour, from the first serial-number byte.
     pub fn color(&self) -> Result<String> {
         Ok(match self.query(MOUSE, CMD_GET_SERIAL, &[])?[0] {
             0x42 => "Black".into(),
@@ -246,38 +300,22 @@ impl Mouse {
     }
 
     pub fn firmware(&self) -> Result<String> {
-        let v = self.query(MOUSE, CMD_GET_FIRMWARE, &[])?;
-        Ok(format!("{}.{}.{}", v[0], v[1], v[2]))
+        Ok(version(&self.query(MOUSE, CMD_GET_FIRMWARE, &[])?))
     }
 
     /// The receiver reports two firmware versions (its nRF52 and GD32 chips).
     pub fn receiver_firmware(&self) -> Result<[String; 2]> {
         let a = self.query(RECEIVER, RCMD_FIRMWARE, &[])?;
         let b = self.query(RECEIVER, RCMD_FIRMWARE_2, &[])?;
-        Ok([format!("{}.{}.{}", a[0], a[1], a[2]), format!("{}.{}.{}", b[0], b[1], b[2])])
+        Ok([version(&a), version(&b)])
     }
 
-    /// Two `[status, level %, millivolts (BE16)]` blocks; CORE shows the second as the battery.
     pub fn battery(&self) -> Result<Battery> {
-        let v = self.query(MOUSE, CMD_GET_BATTERY, &[])?;
-        Ok(Battery {
-            level: v[5],
-            status: battery_status(v[4]),
-            millivolts: u16::from_be_bytes([v[6], v[7]]),
-            secondary_level: v[1],
-            secondary_status: battery_status(v[0]),
-        })
+        Ok(Battery::parse(&self.query(MOUSE, CMD_GET_BATTERY, &[])?))
     }
 
     pub fn lighting(&self) -> Result<Lighting> {
-        let v = self.query(MOUSE, CMD_GET_LIGHTING, &[])?;
-        Ok(Lighting {
-            effect: v[0],
-            wired_brightness: v[1],
-            wireless_brightness: v[2],
-            speed: u16::from_be_bytes([v[3], v[4]]),
-            color: (v[6] == 1).then_some([v[7], v[8], v[9]]),
-        })
+        Ok(Lighting::parse(&self.query(MOUSE, CMD_GET_LIGHTING, &[])?))
     }
 
     // Reads: every setter has a matching getter at `opcode | 0x80` (found by probing a D3;
@@ -300,11 +338,13 @@ impl Mouse {
         Ok((dpi != 0).then_some((dpi, [v[3], v[4], v[5]])))
     }
 
+    /// Polling rate in Hz for the wireless or the wired link.
     pub fn polling(&self, wireless: bool) -> Result<u16> {
         let v = self.query(MOUSE, if wireless { CMD_POLL_WIRELESS } else { CMD_POLL_WIRED } | GET, &[])?;
         Ok(u16::from_be_bytes([v[0], v[1]]))
     }
 
+    /// 0 = 0.7 mm, 1 = 1 mm, 2 = 2 mm
     pub fn lift_off(&self) -> Result<u8> {
         Ok(self.query(MOUSE, CMD_LIFT_OFF | GET, &[])?[0])
     }
@@ -355,6 +395,7 @@ impl Mouse {
         self.set_dpi_slots(&slots, active)
     }
 
+    /// Polling rate in Hz for the wireless or the wired link.
     pub fn set_polling(&self, hz: u16, wireless: bool) -> Result<()> {
         self.send(MOUSE, if wireless { CMD_POLL_WIRELESS } else { CMD_POLL_WIRED }, &hz.to_be_bytes(), 200)
     }
@@ -364,6 +405,7 @@ impl Mouse {
         self.send(MOUSE, CMD_LIFT_OFF, &[level.min(2)], 150)
     }
 
+    /// Debounce in ms; `None` leaves that switch type unchanged.
     pub fn set_debounce(&self, mechanical: Option<u8>, optical: Option<u8>) -> Result<()> {
         if let Some(ms) = mechanical {
             self.send(MOUSE, CMD_DEBOUNCE_MECH, &[ms], 150)?;
@@ -378,6 +420,7 @@ impl Mouse {
         self.send(MOUSE, CMD_MOTION_SYNC, &[on as u8], 150)
     }
 
+    /// Sleep after `minutes` without movement (0 = never).
     pub fn set_power_saving(&self, minutes: u32) -> Result<()> {
         let mut p = [0u8; 8];
         p[..4].copy_from_slice(&(minutes * 60_000).to_be_bytes());
@@ -408,5 +451,64 @@ impl Mouse {
             (None, None) => bail!("nothing to bind"),
         };
         self.send(MOUSE, CMD_BUTTON, &[button, f[0], f[1], f[2], f[3], f[4]], 30)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_layout() {
+        let r = report(MOUSE, CMD_LIFT_OFF, &[2]).unwrap();
+        assert_eq!(r.len(), REPORT_LEN);
+        assert_eq!(r[..5], [REPORT_ID, MOUSE, CMD_LIFT_OFF, 1, 2]);
+        assert!(r[5..].iter().all(|&b| b == 0));
+        assert!(report(MOUSE, CMD_LIFT_OFF, &[0; REPORT_LEN - 4]).is_ok());
+        assert!(report(MOUSE, CMD_LIFT_OFF, &[0; REPORT_LEN - 3]).is_err());
+    }
+
+    #[test]
+    fn reply_must_echo_the_command() {
+        let mut buf = [0u8; REPORT_LEN];
+        buf[..7].copy_from_slice(&[REPORT_ID, MOUSE, CMD_GET_FIRMWARE, 3, 1, 3, 3]);
+        let payload = reply_payload(&buf, CMD_GET_FIRMWARE).unwrap();
+        assert_eq!(payload.len(), REPORT_LEN - 4);
+        assert_eq!(version(&payload), "1.3.3");
+        assert_eq!(reply_payload(&buf, CMD_GET_BATTERY), None);
+        assert_eq!(reply_payload(&[0u8; REPORT_LEN], CMD_GET_FIRMWARE), None, "empty report = asleep");
+        buf[3] = 0xFF;
+        assert_eq!(reply_payload(&buf, CMD_GET_FIRMWARE).unwrap().len(), REPORT_LEN - 4, "length is clamped");
+    }
+
+    #[test]
+    fn parses_battery_and_lighting() {
+        let battery = Battery::parse(&[2, 80, 0, 0, 1, 76, 0x0F, 0xA0]);
+        assert_eq!((battery.level, battery.status, battery.millivolts), (76, "charging", 4000));
+        assert_eq!((battery.secondary_level, battery.secondary_status), (80, "discharging"));
+        let single = Lighting::parse(&[5, 60, 40, 0, 50, 8, 1, 0xFF, 0x88, 0x00]);
+        assert_eq!(single.effect, 5);
+        assert_eq!((single.wired_brightness, single.wireless_brightness, single.speed), (60, 40, 50));
+        assert_eq!(single.color, Some([0xFF, 0x88, 0x00]));
+        assert_eq!(Lighting::parse(&[1, 60, 40, 0, 50, 8, 0, 0xFF, 0, 0]).color, None);
+    }
+
+    #[test]
+    fn keys_parse_by_name_or_usage() {
+        assert_eq!(parse_key("A").unwrap(), 0x04);
+        assert_eq!(parse_key("f12").unwrap(), 0x45);
+        assert_eq!(parse_key("0").unwrap(), 0x27);
+        assert_eq!(parse_key("0x2c").unwrap(), 0x2C);
+        assert!(parse_key("nope").is_err());
+        let names = key_names();
+        let unique: std::collections::BTreeSet<&str> = names.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(unique.len(), names.len(), "key names must be unique");
+    }
+
+    #[test]
+    fn table_lookup() {
+        assert_eq!(lookup(&EFFECTS, "ripple"), Some(11));
+        assert_eq!(lookup(&BUTTONS, "dpi"), Some(19));
+        assert_eq!(lookup(&BUTTONS, "nope"), None);
     }
 }
