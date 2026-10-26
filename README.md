@@ -185,7 +185,7 @@ app whose device logic is plain JavaScript) and checked against real hardware:
   [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux), pinned to a commit
   whose reports were checked against Glorious CORE.
 - **Firmware** - CORE's updaters are packaged Node.js programs; their exact HID commands were
-  captured by running them against a mocked HID layer. The Nordic DFU client is our own, tested
+  captured by running them against a mocked HID layer. The Nordic DFU client was written for this project, tested
   against a simulated bootloader and on real hardware.
 
 No Glorious code, binaries or firmware are included in this repository.

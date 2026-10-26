@@ -23,7 +23,7 @@ body:
     id: system
     attributes:
       label: Distribution and desktop
-      placeholder: e.g. CachyOS, KDE Plasma 6 (Wayland)
+      placeholder: e.g. Fedora 41, GNOME 47 (Wayland)
   - type: textarea
     id: info
     attributes:
