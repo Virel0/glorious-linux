@@ -27,7 +27,15 @@ fn strong_family() -> FontFamily {
     FontFamily::Name("strong".into())
 }
 
+/// Install the app's fonts and dark style.
 pub fn install(ctx: &egui::Context) {
+    ctx.set_fonts(fonts());
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.style_mut_of(egui::Theme::Dark, style);
+}
+
+/// Bundled text fonts with egui's fonts and the Phosphor icons as fallbacks.
+fn fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     for (name, bytes) in [
         ("SpaceGrotesk-Medium", include_bytes!("../assets/fonts/SpaceGrotesk-Medium.ttf").as_slice()),
@@ -58,57 +66,56 @@ pub fn install(ctx: &egui::Context) {
             list.insert(at, "phosphor".into());
         }
     }
-    ctx.set_fonts(fonts);
+    fonts
+}
 
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.style_mut_of(egui::Theme::Dark, |s| {
-        s.text_styles = [
-            (TextStyle::Heading, FontId::new(26.0, heading_family())),
-            (TextStyle::Body, FontId::new(14.5, FontFamily::Proportional)),
-            (TextStyle::Button, FontId::new(14.0, FontFamily::Proportional)),
-            (TextStyle::Small, FontId::new(12.0, FontFamily::Proportional)),
-            (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
-        ]
-        .into();
-        s.spacing.item_spacing = egui::vec2(10.0, 10.0);
-        s.spacing.button_padding = egui::vec2(12.0, 6.0);
-        s.spacing.interact_size.y = 30.0;
-        s.spacing.slider_width = 280.0;
-        s.spacing.combo_width = 180.0;
+fn style(s: &mut egui::Style) {
+    s.text_styles = [
+        (TextStyle::Heading, FontId::new(26.0, heading_family())),
+        (TextStyle::Body, FontId::new(14.5, FontFamily::Proportional)),
+        (TextStyle::Button, FontId::new(14.0, FontFamily::Proportional)),
+        (TextStyle::Small, FontId::new(12.0, FontFamily::Proportional)),
+        (TextStyle::Monospace, FontId::new(12.5, FontFamily::Monospace)),
+    ]
+    .into();
+    s.spacing.item_spacing = egui::vec2(10.0, 10.0);
+    s.spacing.button_padding = egui::vec2(12.0, 6.0);
+    s.spacing.interact_size.y = 30.0;
+    s.spacing.slider_width = 280.0;
+    s.spacing.combo_width = 180.0;
 
-        let v = &mut s.visuals;
-        v.panel_fill = BG;
-        v.window_fill = SURFACE;
-        v.window_stroke = Stroke::new(1.0_f32, BORDER);
-        v.window_corner_radius = CornerRadius::same(12);
-        v.extreme_bg_color = PANEL;
-        v.faint_bg_color = SURFACE2;
-        v.override_text_color = None;
-        v.hyperlink_color = ACCENT;
-        v.slider_trailing_fill = true;
-        v.selection.bg_fill = ACCENT;
-        v.selection.stroke = Stroke::new(1.0_f32, ON_ACCENT);
-        let radius = CornerRadius::same(8);
-        let w = &mut v.widgets;
-        w.noninteractive.bg_fill = SURFACE;
-        w.noninteractive.weak_bg_fill = SURFACE;
-        w.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-        w.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-        w.noninteractive.corner_radius = radius;
-        for (state, fill, stroke) in [
-            (&mut w.inactive, SURFACE2, Color32::TRANSPARENT),
-            (&mut w.hovered, SURFACE3, ACCENT.gamma_multiply(0.5)),
-            (&mut w.active, SURFACE3, ACCENT),
-            (&mut w.open, SURFACE3, BORDER),
-        ] {
-            state.bg_fill = fill;
-            state.weak_bg_fill = fill;
-            state.bg_stroke = Stroke::new(1.0_f32, stroke);
-            state.fg_stroke = Stroke::new(1.5_f32, TEXT);
-            state.corner_radius = radius;
-            state.expansion = 0.0;
-        }
-    });
+    let v = &mut s.visuals;
+    v.panel_fill = BG;
+    v.window_fill = SURFACE;
+    v.window_stroke = Stroke::new(1.0_f32, BORDER);
+    v.window_corner_radius = CornerRadius::same(12);
+    v.extreme_bg_color = PANEL;
+    v.faint_bg_color = SURFACE2;
+    v.override_text_color = None;
+    v.hyperlink_color = ACCENT;
+    v.slider_trailing_fill = true;
+    v.selection.bg_fill = ACCENT;
+    v.selection.stroke = Stroke::new(1.0_f32, ON_ACCENT);
+    let radius = CornerRadius::same(8);
+    let w = &mut v.widgets;
+    w.noninteractive.bg_fill = SURFACE;
+    w.noninteractive.weak_bg_fill = SURFACE;
+    w.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
+    w.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
+    w.noninteractive.corner_radius = radius;
+    for (state, fill, stroke) in [
+        (&mut w.inactive, SURFACE2, Color32::TRANSPARENT),
+        (&mut w.hovered, SURFACE3, ACCENT.gamma_multiply(0.5)),
+        (&mut w.active, SURFACE3, ACCENT),
+        (&mut w.open, SURFACE3, BORDER),
+    ] {
+        state.bg_fill = fill;
+        state.weak_bg_fill = fill;
+        state.bg_stroke = Stroke::new(1.0_f32, stroke);
+        state.fg_stroke = Stroke::new(1.5_f32, TEXT);
+        state.corner_radius = radius;
+        state.expansion = 0.0;
+    }
 }
 
 /// A titled card with an icon.

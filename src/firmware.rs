@@ -241,8 +241,9 @@ impl Flasher<'_> {
             .spawn()
             .with_context(|| format!("cannot run {}", cmd[0]))?;
         let (tx, rx) = mpsc::channel();
+        let piped = "stdout and stderr are piped above";
         let pipes: [Box<dyn Read + Send>; 2] =
-            [Box::new(child.stdout.take().unwrap()), Box::new(child.stderr.take().unwrap())];
+            [Box::new(child.stdout.take().expect(piped)), Box::new(child.stderr.take().expect(piped))];
         for pipe in pipes {
             let tx = tx.clone();
             thread::spawn(move || {
@@ -401,26 +402,62 @@ fn fetch_bundle(url: &str, allow_unverified: bool, emit: &dyn Fn(FlashEvent)) ->
 }
 
 /// Why `flash` would refuse right now, if it would.
-pub fn blocker(st: &Status, part: Part, force: bool, dry: bool) -> Option<String> {
-    let (do_mouse, do_recv) = st.plan(part, force);
-    if !(do_mouse || do_recv) {
-        return Some("Everything is up to date - nothing to flash.".into());
+/// Why a flash can't start.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Blocker {
+    UpToDate,
+    NoCable,
+    NoReceiver,
+    /// Install hints for the missing tools.
+    MissingTools(Vec<&'static str>),
+}
+
+impl std::fmt::Display for Blocker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Blocker::UpToDate => f.write_str("Everything is up to date - nothing to flash."),
+            Blocker::NoCable => {
+                f.write_str("Plug the USB cable into the mouse - mouse updates only run over the cable.")
+            }
+            Blocker::NoReceiver => f.write_str("Plug in the wireless receiver to update it."),
+            Blocker::MissingTools(tools) => write!(f, "Missing {}", tools.join(", ")),
+        }
     }
-    if dry {
-        return None;
+}
+
+/// The first thing stopping a flash of `plan` (mouse, receiver), given what is plugged in and
+/// which tools are missing. A dry run only needs something to flash.
+pub fn readiness(
+    plan: (bool, bool),
+    dry: bool,
+    cabled: bool,
+    receiver: bool,
+    missing: &[&'static str],
+) -> Option<Blocker> {
+    let (do_mouse, do_recv) = plan;
+    if !(do_mouse || do_recv) {
+        Some(Blocker::UpToDate)
+    } else if dry {
+        None
+    } else if do_mouse && !cabled {
+        Some(Blocker::NoCable)
+    } else if do_recv && !receiver {
+        Some(Blocker::NoReceiver)
+    } else if do_recv && !missing.is_empty() {
+        Some(Blocker::MissingTools(missing.to_vec()))
+    } else {
+        None
+    }
+}
+
+/// `readiness` for what is plugged in and installed right now.
+pub fn blocker(st: &Status, part: Part, force: bool, dry: bool) -> Option<Blocker> {
+    let plan = st.plan(part, force);
+    if dry || !(plan.0 || plan.1) {
+        return readiness(plan, dry, false, false, &[]);
     }
     let (cabled, receiver) = connections();
-    if do_mouse && !cabled {
-        return Some("Plug the USB cable into the mouse - mouse updates only run over the cable.".into());
-    }
-    if do_recv && !receiver {
-        return Some("Plug in the wireless receiver to update it.".into());
-    }
-    let missing = missing_tools(do_recv);
-    if !missing.is_empty() {
-        return Some(format!("Missing {}", missing.join(", ")));
-    }
-    None
+    readiness(plan, dry, cabled, receiver, &missing_tools(plan.1))
 }
 
 /// Flash the parts selected by `st.plan(part, force)`. The caller is responsible for confirmation.
@@ -513,7 +550,7 @@ pub fn cli(flash_requested: bool, part: Part, dry: bool, force: bool, allow_unve
 
 #[cfg(test)]
 mod tests {
-    use super::{dfu_util_percent, fetch_bundle, known_hash};
+    use super::{dfu_util_percent, fetch_bundle, known_hash, readiness, Blocker};
 
     const D3_BLACK: &str =
         "https://nyc3.digitaloceanspaces.com/gloriouscore/Glorious_Core/Model_D3_Wireless_Black-1.3.3_1.1.0-1.3.0_1.0.0.zip";
@@ -539,6 +576,23 @@ mod tests {
         assert_eq!(mode & 0o777, 0o700, "temp dir must be private");
         drop(files);
         assert!(!dir.exists(), "temp dir must be removed");
+    }
+
+    #[test]
+    fn readiness_reports_the_first_blocker() {
+        let tools = ["dfu-util"];
+        assert_eq!(readiness((false, false), false, true, true, &[]), Some(Blocker::UpToDate));
+        assert_eq!(readiness((false, false), true, true, true, &[]), Some(Blocker::UpToDate));
+        assert_eq!(readiness((true, true), true, false, false, &tools), None, "dry runs need nothing plugged in");
+        assert_eq!(readiness((true, true), false, false, false, &tools), Some(Blocker::NoCable));
+        assert_eq!(readiness((true, true), false, true, false, &tools), Some(Blocker::NoReceiver));
+        assert_eq!(readiness((true, true), false, true, true, &tools), Some(Blocker::MissingTools(tools.to_vec())));
+        assert_eq!(
+            readiness((true, false), false, true, false, &tools),
+            None,
+            "mouse alone needs no receiver or tools"
+        );
+        assert_eq!(readiness((false, true), false, false, true, &[]), None, "receiver alone needs no cable");
     }
 
     #[test]

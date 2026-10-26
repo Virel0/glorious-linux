@@ -148,6 +148,7 @@ enum FirmwareCmd {
     },
 }
 
+/// "ff8800" or "#ff8800" -> [0xff, 0x88, 0x00]
 fn hex_rgb(s: &str) -> Result<[u8; 3]> {
     let s = s.trim_start_matches('#');
     if s.len() != 6 {
@@ -222,20 +223,7 @@ fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
     let m = Mouse::open(&api, verbose)?;
     match cmd {
         MouseCmd::Info => mouse_info(&m)?,
-        MouseCmd::Dpi { stages, active, colors } => {
-            if !(1..=6).contains(&stages.len()) {
-                bail!("give between 1 and 6 DPI stages");
-            }
-            let mut rgb: Vec<[u8; 3]> = colors.iter().map(|c| hex_rgb(c)).collect::<Result<_>>()?;
-            rgb.extend_from_slice(&DEFAULT_STAGE_COLORS[rgb.len().min(6)..]);
-            let active = match active {
-                Some(a) if a >= 1 && (a as usize) <= stages.len() => a - 1,
-                Some(_) => bail!("--active must point at one of the given stages (1-based)"),
-                None => (stages.len() as u8 - 1).min(2),
-            };
-            m.set_dpi_stages(&stages, &rgb, active)?;
-            println!("DPI stages set to {stages:?}, active stage {} ({} DPI)", active + 1, stages[active as usize]);
-        }
+        MouseCmd::Dpi { stages, active, colors } => set_dpi(&m, &stages, active, &colors)?,
         MouseCmd::Polling { rate, wired } => {
             if ![125, 250, 500, 1000, 2000, 4000, 8000].contains(&rate) {
                 bail!("polling rate must be one of 125, 250, 500, 1000, 2000, 4000, 8000");
@@ -278,54 +266,73 @@ fn mouse(cmd: MouseCmd, verbose: bool) -> Result<()> {
             m.set_lighting(id, b, wireless_brightness.unwrap_or(b).min(100), speed, rgb)?;
             println!("Lighting set to {effect}");
         }
-        MouseCmd::Bind { button, action } => {
-            if lookup(&BUTTONS, &button).is_none() {
-                bail!("unknown button; use one of {}", BUTTONS.map(|b| b.0).join(", "));
-            }
-            if !action.starts_with("key:") && !FUNCTIONS.iter().any(|f| f.0 == action) {
-                bail!("unknown action; use one of {} or key:<name|hex usage>", FUNCTIONS.map(|f| f.0).join(", "));
-            }
-            settings::apply_button(&m, &button, &action)?;
-            println!("{button} -> {action}");
-        }
-        MouseCmd::WatchDpi => {
-            let mut last = None;
-            let start = std::time::Instant::now();
-            let (mut polls, mut errors) = (0u32, 0u32);
-            loop {
-                polls += 1;
-                match m.active_stage_fast() {
-                    Ok(s) if Some(s) != last => {
-                        println!(
-                            "{:>7.2}s  stage {}  ({polls} polls, {errors} errors)",
-                            start.elapsed().as_secs_f32(),
-                            s + 1
-                        );
-                        last = Some(s);
-                    }
-                    Ok(_) => {}
-                    Err(_) => errors += 1,
-                }
-                if polls % 40 == 0 {
-                    eprintln!("{:>7.2}s  {polls} polls, {errors} errors", start.elapsed().as_secs_f32());
-                }
-            }
-        }
-        MouseCmd::Raw { target, cmd, payload } => {
-            let target = if target == "receiver" { v3::RECEIVER } else { v3::MOUSE };
-            let cmd = u8::from_str_radix(cmd.trim_start_matches("0x"), 16)?;
-            let payload: Vec<u8> =
-                payload.iter().map(|b| u8::from_str_radix(b.trim_start_matches("0x"), 16)).collect::<Result<_, _>>()?;
-            let reply = m.query(target, cmd, &payload)?;
-            let end = reply.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-            println!(
-                "{:02x}: {}",
-                cmd,
-                reply[..end.max(1)].iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
-            );
-        }
-        MouseCmd::Firmware { .. } => unreachable!(),
+        MouseCmd::Bind { button, action } => bind(&m, &button, &action)?,
+        MouseCmd::WatchDpi => watch_dpi(&m),
+        MouseCmd::Raw { target, cmd, payload } => raw(&m, &target, &cmd, &payload)?,
+        MouseCmd::Firmware { .. } => unreachable!("firmware commands return before the mouse is opened"),
     }
+    Ok(())
+}
+
+fn set_dpi(m: &Mouse, stages: &[u16], active: Option<u8>, colors: &[String]) -> Result<()> {
+    if !(1..=6).contains(&stages.len()) {
+        bail!("give between 1 and 6 DPI stages");
+    }
+    let mut rgb: Vec<[u8; 3]> = colors.iter().map(|c| hex_rgb(c)).collect::<Result<_>>()?;
+    rgb.extend_from_slice(&DEFAULT_STAGE_COLORS[rgb.len().min(6)..]);
+    let active = match active {
+        Some(a) if a >= 1 && (a as usize) <= stages.len() => a - 1,
+        Some(_) => bail!("--active must point at one of the given stages (1-based)"),
+        None => (stages.len() as u8 - 1).min(2),
+    };
+    m.set_dpi_stages(stages, &rgb, active)?;
+    println!("DPI stages set to {stages:?}, active stage {} ({} DPI)", active + 1, stages[active as usize]);
+    Ok(())
+}
+
+fn bind(m: &Mouse, button: &str, action: &str) -> Result<()> {
+    if lookup(&BUTTONS, button).is_none() {
+        bail!("unknown button; use one of {}", BUTTONS.map(|b| b.0).join(", "));
+    }
+    if !action.starts_with("key:") && !FUNCTIONS.iter().any(|f| f.0 == action) {
+        bail!("unknown action; use one of {} or key:<name|hex usage>", FUNCTIONS.map(|f| f.0).join(", "));
+    }
+    settings::apply_button(m, button, action)?;
+    println!("{button} -> {action}");
+    Ok(())
+}
+
+/// Print the active DPI stage whenever it changes, until interrupted.
+fn watch_dpi(m: &Mouse) -> ! {
+    let mut last = None;
+    let start = std::time::Instant::now();
+    let (mut polls, mut errors) = (0u32, 0u32);
+    loop {
+        polls += 1;
+        match m.active_stage_fast() {
+            Ok(s) if Some(s) != last => {
+                println!("{:>7.2}s  stage {}  ({polls} polls, {errors} errors)", start.elapsed().as_secs_f32(), s + 1);
+                last = Some(s);
+            }
+            Ok(_) => {}
+            Err(_) => errors += 1,
+        }
+        if polls % 40 == 0 {
+            eprintln!("{:>7.2}s  {polls} polls, {errors} errors", start.elapsed().as_secs_f32());
+        }
+    }
+}
+
+/// Send one hex command to the mouse or receiver and print the reply without trailing zeros.
+fn raw(m: &Mouse, target: &str, cmd: &str, payload: &[String]) -> Result<()> {
+    let target = if target == "receiver" { v3::RECEIVER } else { v3::MOUSE };
+    let cmd = u8::from_str_radix(cmd.trim_start_matches("0x"), 16)?;
+    let payload: Vec<u8> =
+        payload.iter().map(|b| u8::from_str_radix(b.trim_start_matches("0x"), 16)).collect::<Result<_, _>>()?;
+    let reply = m.query(target, cmd, &payload)?;
+    let end = reply.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+    let hex: Vec<String> = reply[..end.max(1)].iter().map(|b| format!("{b:02x}")).collect();
+    println!("{cmd:02x}: {}", hex.join(" "));
     Ok(())
 }
 
@@ -335,5 +342,18 @@ fn main() -> Result<()> {
         None => gui::run(),
         Some(Top::Mouse { cmd }) => mouse(cmd, cli.verbose),
         Some(Top::Keyboard { cmd: KeyboardCmd::Info }) => gmmk3he::cli(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hex_rgb;
+
+    #[test]
+    fn parses_hex_colours() {
+        assert_eq!(hex_rgb("ff8800").unwrap(), [0xff, 0x88, 0x00]);
+        assert_eq!(hex_rgb("#0A84FF").unwrap(), [0x0a, 0x84, 0xff]);
+        assert!(hex_rgb("fff").is_err());
+        assert!(hex_rgb("gg0000").is_err());
     }
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- Keymap: mouse-button codes read "Mouse Left", "Mouse Right"... in title case like the other keys.
+- Internal cleanup with no other visible changes: the GUI is split into one file per page, long
+  functions are broken up, the firmware "ready to flash?" rules are shared by the CLI and GUI, and
+  the mouse protocol's report building and parsing now have tests.
+
 ## v0.5.1
 - Updated the GUI toolkit (eframe/egui 0.37) and the HTTP client (ureq 3).
 - The keyboard protocol code is now part of the project (from inglorious-core-linux, MIT), and
