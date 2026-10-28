@@ -11,7 +11,7 @@
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 ![Rust](https://img.shields.io/badge/made%20with-Rust-dea584)
 
-[Install](#install) · [Features](#features) · [Firmware updates](#firmware-updates) · [Troubleshooting](#troubleshooting) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
+[Install](#install) · [Features](#features) · [Firmware updates](#firmware-updates) · [Troubleshooting](#troubleshooting) · [Privacy](#privacy) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 <img src="docs/overview.png" width="860" alt="Overview page">
 
@@ -173,6 +173,27 @@ applied values are kept in `~/.config/glorious-core-rs/state.json`, shared with
 from the mouse itself.
 </details>
 
+## Privacy
+
+No accounts, telemetry or analytics. The app only goes online to check for and download
+firmware, and never sends anything about you or your devices - versions are compared on your
+computer.
+
+| When | Contacts | Sends |
+|---|---|---|
+| The keyboard connects, you open **Firmware**, or run `firmware check` / `keyboard info` | Glorious' firmware list (`gloriouscore.nyc3.digitaloceanspaces.com`) | A plain download request |
+| You start a firmware update | Glorious' firmware download (`nyc3.digitaloceanspaces.com`) | A plain download request |
+| You run `install.sh` | GitHub | A plain download request (source or the release binary) |
+
+Like any download, these requests reveal your IP address and the HTTP library's user agent.
+
+| Stored on your computer | Where |
+|---|---|
+| Keyboard settings you applied (the keyboard can't report them back) | `~/.config/glorious-core-rs/state.json`, plus timestamped `.bak` copies of earlier versions |
+| Firmware being flashed | A private temporary folder, deleted when the update ends |
+
+Mouse settings live on the mouse itself. Nothing else is written to disk.
+
 ## How it works
 
 The protocols were re-implemented for interoperability from Glorious CORE 2.1.23 (an Electron
@@ -182,8 +203,8 @@ app whose device logic is plain JavaScript) and checked against real hardware:
   payload…]`, where target `0xBB` is the mouse (relayed over 2.4 GHz by the receiver) and `0xAA`
   the receiver. Every setter has a getter at `command | 0x80`, which is how settings are read back.
 - **Keyboard** - the protocol and state code of
-  [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux), pinned to a commit
-  whose reports were checked against Glorious CORE.
+  [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux), whose reports were
+  checked against Glorious CORE, included in `src/magneton` under its MIT license.
 - **Firmware** - CORE's updaters are packaged Node.js programs; their exact HID commands were
   captured by running them against a mocked HID layer. The Nordic DFU client was written for this project, tested
   against a simulated bootloader and on real hardware.

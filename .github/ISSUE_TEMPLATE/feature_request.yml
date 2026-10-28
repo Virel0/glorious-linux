@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a new feature or an improvement for a supported device
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: The problem or the task, in your own words. Glorious CORE screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could it work?
+      description: Optional - a sketch of the feature, or how Glorious CORE does it.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Mouse
+        - Keyboard
+        - Firmware updates
+        - Installer / packaging
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      placeholder: e.g. Model D3 Wireless, GMMK 3 HE 75%

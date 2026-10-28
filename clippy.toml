@@ -1,0 +1,5 @@
+# Code guidelines enforced by clippy (lints switched on in Cargo.toml [lints.clippy]).
+# Functions stay under 100 lines; the size report (scripts/size-report.sh) covers file length.
+too-many-lines-threshold = 100
+# `unwrap` is fine in tests; elsewhere use `?`, or `expect` with the invariant spelled out.
+allow-unwrap-in-tests = true
