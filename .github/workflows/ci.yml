@@ -19,7 +19,18 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --release --locked --all-targets -- -D warnings
       - run: cargo test --release --locked
-      - run: bash -n install.sh uninstall.sh
+      - run: bash -n install.sh uninstall.sh scripts/*.sh
+      - name: Banned dependencies
+        # aws-lc-rs is a large C/assembly crypto build; TLS stays on ring. Cargo.lock lists every
+        # crate that could be compiled on any platform, so this also catches optional ones.
+        run: |
+          banned='aws-lc-rs|aws-lc-sys|aws-lc-fips-sys|openssl|openssl-sys|native-tls'
+          if grep -nE "^name = \"($banned)\"$" Cargo.lock; then
+            echo "::error file=Cargo.lock::banned dependency in Cargo.lock (see above); keep TLS on rustls + ring"
+            exit 1
+          fi
+      - name: Size report
+        run: scripts/size-report.sh
   audit:
     runs-on: ubuntu-22.04
     steps:

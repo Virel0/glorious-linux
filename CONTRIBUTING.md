@@ -8,9 +8,13 @@ Thanks for helping! Bug reports, device reports and pull requests are all welcom
 cargo build --release          # binary: target/release/glorious
 cargo test                     # unit tests (add `-- --include-ignored` for the network test)
 cargo fmt && cargo clippy --all-targets -- -D warnings
+scripts/size-report.sh         # largest files; warns on files > 800 and functions > 100 lines
 ```
 
-CI runs the same checks plus `cargo audit`; please keep them green.
+CI runs the same checks plus `cargo audit` and a banned-dependency check (no aws-lc-rs or
+OpenSSL; TLS stays on rustls + ring); please keep them green. Keep files focused (ideally under
+300 lines) and functions short - clippy rejects functions over 100 lines and `unwrap` outside
+tests (use `?`, or `expect` with the reason it can't fail).
 
 ## Layout
 
@@ -20,8 +24,11 @@ CI runs the same checks plus `cargo audit`; please keep them green.
 | `src/settings.rs` | Mouse settings model: read from / apply to the mouse |
 | `src/firmware.rs` | Firmware check, download verification and the update sequence |
 | `src/nordic_dfu.rs` | Nordic secure DFU over serial (SLIP), with a simulated bootloader in its tests |
-| `src/kbdevice.rs`, `src/kb_gui.rs`, `src/keybed.rs` | GMMK 3 HE I/O, pages and board drawing |
-| `src/gui.rs`, `src/theme.rs` | The egui app and its look |
+| `src/magneton/` | GMMK 3 HE protocol, state and key tables (vendored from inglorious-core-linux, MIT) |
+| `src/kbdevice.rs`, `src/keybed.rs` | GMMK 3 HE I/O worker and board drawing |
+| `src/kb_gui/` | Keyboard pages: one file per page, shared state in `mod.rs` |
+| `src/gui/` | The egui app: state and layout in `mod.rs`, background jobs in `worker.rs`, one file per tab |
+| `src/theme.rs` | Colours, fonts and shared widgets |
 | `packaging/` | udev rule, desktop entry, icons, Arch PKGBUILD |
 
 ## Adding a device
