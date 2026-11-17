@@ -21,7 +21,9 @@ pub const PID_RECEIVER_BOOT: u16 = 0xA301;
 /// (raw model name, CORE product id, wired PID, wired bootloader PID)
 pub const MODELS: [(&str, &str, u16, u16); 2] = [
     ("MOUSE_D3_WIRELESS", "ModelD3Wireless", 0xA322, 0xA323),
-    ("MOUSE_O3_WIRELESS", "ModelO3Wireless", 0xA310, 0xA311),
+    // CORE 2.1.23 lists the O3 Wireless as cable a312 / bootloader a313 (Bluetooth a316);
+    // a310 / a311 belong to the separate Model O3 Wired.
+    ("MOUSE_O3_WIRELESS", "ModelO3Wireless", 0xA312, 0xA313),
 ];
 
 const CMD_POWER_SAVING: u8 = 0x04;

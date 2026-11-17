@@ -12,6 +12,13 @@ All notable changes to this project are documented here. The format is based on
 - README privacy section: what the app sends over the network and what it stores.
 - Feature-request issue form.
 
+### Fixed
+- Model O3 Wireless used the Model O3 *Wired* USB IDs (`a310`, bootloader `a311`), so the O3
+  Wireless wasn't found on its cable and a firmware update would wait for the wrong bootloader.
+  It now uses `a312` and bootloader `a313`, as in Glorious CORE 2.1.23's device table; the udev
+  rule follows. Tested on an O3 Wireless: settings, lighting, battery and a 1.0.1 -> 1.3.3 mouse
+  firmware update over the cable.
+
 ### Changed
 - Keymap: mouse-button codes read "Mouse Left", "Mouse Right"... in title case like the other keys.
 - Internal cleanup with no other visible changes: the GUI is split into one file per page, long
