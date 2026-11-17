@@ -68,6 +68,13 @@
 | Model D3 Wireless (receiver or cable) | `3794:a300` / `3794:a322` | ✅ Settings, live DPI, firmware update tested |
 | Model O3 Wireless | `3794:a300` / `3794:a310` | 🟡 Same protocol, untested |
 | GMMK 3 HE 75% ANSI | `342d:e3de` | ✅ Reads tested · lighting / actuation tested upstream · keymap is new |
+| GMMK Pro (stock firmware) | `320f:5044` | ✅ Lighting (CLI): 19 effects, colour, brightness, speed - tested on an ANSI board |
+
+**GMMK Pro:** `glorious gmmk-pro lighting <effect>` sets the active profile's lighting; there is
+no GUI page yet, and the firmware can't report its lighting back. With `--color`, most animated
+effects run in that one colour (the animation then shows as moving brightness); a few, such as
+`wave-2`, keep their own rainbow. Without `--color` they use their built-in colours. Keyboards
+flashed with QMK aren't covered - use VIA or OpenRGB there.
 
 Have another Glorious device? See [CONTRIBUTING.md](CONTRIBUTING.md) - most of the work is
 already done.
@@ -115,6 +122,7 @@ glorious mouse bind dpi middle         # or key:a, key:f12, key:0x04 ...
 glorious mouse firmware check
 glorious mouse firmware flash --dry-run
 glorious keyboard info
+glorious gmmk-pro lighting wave --color ff8800 --brightness 70 --speed 60
 ```
 
 Add `-v` to see every HID report sent and received.
@@ -215,6 +223,8 @@ No Glorious code, binaries or firmware are included in this repository.
 
 - [inglorious-core-linux](https://github.com/tg5ee/inglorious-core-linux) (MIT) - keyboard
   protocol library and board layout
+- [Open-Glorious-Core](https://github.com/MechNoxer/Open-Glorious-Core) (MIT) - GMMK Pro lighting
+  reports
 - Space Grotesk, Work Sans and JetBrains Mono fonts (SIL Open Font License, see `assets/fonts`)
 - [Phosphor](https://phosphoricons.com) icons (MIT, bundled in `assets/fonts`), built with [egui](https://github.com/emilk/egui)
 
