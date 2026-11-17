@@ -66,8 +66,19 @@
 | Device | USB ID | Status |
 |---|---|---|
 | Model D3 Wireless (receiver or cable) | `3794:a300` / `3794:a322` | ✅ Settings, live DPI, firmware update tested |
-| Model O3 Wireless | `3794:a300` / `3794:a310` | 🟡 Same protocol, untested |
+| Model O3 Wireless (receiver or cable) | `3794:a300` / `3794:a312` | ✅ Settings, lighting, battery, firmware update tested (see note) |
 | GMMK 3 HE 75% ANSI | `342d:e3de` | ✅ Reads tested · lighting / actuation tested upstream · keymap is new |
+
+**Model O3 Wireless:** mice shipped with firmware **1.0.1** reject every lighting effect except
+`off` (the request stalls on the cable; through the receiver it is silently dropped). Update the
+mouse to 1.3.3 or later with `glorious mouse firmware flash --part mouse` (on its cable), then
+power-cycle it (hold the power button 3 s) before the LEDs show changes. On the O3, block 1 of the
+battery reply (`secondary` in `mouse info`, CORE's "backup battery") is the swappable InfinitePlay
+pack and block 2 is the cell built into the mouse.
+
+**On Omarchy?** [omarchy-glorious-mouse](https://github.com/mattvv/omarchy-glorious-mouse) is a bar
+widget built on `glorious`: battery (mouse, swap pack and dock), dock state, and lighting that follows
+your Omarchy theme.
 
 Have another Glorious device? See [CONTRIBUTING.md](CONTRIBUTING.md) - most of the work is
 already done.
