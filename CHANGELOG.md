@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- GMMK Pro (stock firmware, `320f:5044`) lighting from the command line: `glorious gmmk-pro
+  lighting <effect> --color --brightness --speed` for all 19 effects, and `gmmk-pro info`. Most
+  animated effects also run in a single chosen colour. The udev rule opens only its lighting
+  interface. Report layout from Open-Glorious-Core (MIT).
 - Releases can be rebuilt for an existing tag from the Actions tab, and are GPG-signed (`.asc`)
   once a signing key is added as a repo secret.
 - README privacy section: what the app sends over the network and what it stores.

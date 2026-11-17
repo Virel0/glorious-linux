@@ -13,6 +13,7 @@ SUBSYSTEM!="hidraw", GOTO="glorious_hidraw_end"
 ATTRS{idVendor}=="3794", ATTRS{idProduct}=="a300", ENV{GLORIOUS_HID}="receiver"
 ATTRS{idVendor}=="3794", ATTRS{idProduct}=="a322|a310", ENV{GLORIOUS_HID}="wired-mouse"
 ATTRS{idVendor}=="342d", ATTRS{idProduct}=="e3de", ENV{GLORIOUS_HID}="gmmk3he"
+ATTRS{idVendor}=="320f", ATTRS{idProduct}=="5044", ENV{GLORIOUS_HID}="gmmkpro"
 
 # V3 wireless receiver: vendor settings interface only (interface 0; interface 1 sends keystrokes).
 ENV{GLORIOUS_HID}=="receiver", ATTRS{bInterfaceNumber}=="00", TAG+="uaccess"
@@ -24,6 +25,9 @@ ENV{GLORIOUS_HID}=="gmmk3he", ATTRS{bInterfaceNumber}=="02", TAG+="uaccess"
 # Optional: live key-travel meter. Interface 1 also carries every keystroke, so only enable this
 # if you accept that programs running as you could read your typing from it.
 #ENV{GLORIOUS_HID}=="gmmk3he", ATTRS{bInterfaceNumber}=="01", TAG+="uaccess"
+# GMMK Pro (stock firmware): lighting interface only (interface 2: one vendor feature report, no
+# key reports; interface 0 is the keyboard itself).
+ENV{GLORIOUS_HID}=="gmmkpro", ATTRS{bInterfaceNumber}=="02", TAG+="uaccess"
 LABEL="glorious_hidraw_end"
 
 # nRF52 serial DFU bootloaders of the mouse and receiver (show up as /dev/ttyACM*).

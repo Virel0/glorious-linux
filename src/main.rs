@@ -2,6 +2,7 @@
 //! Without a subcommand it opens the GUI.
 mod firmware;
 mod gmmk3he;
+mod gmmkpro;
 mod gui;
 mod hid;
 mod icons;
@@ -40,6 +41,32 @@ enum Top {
     Keyboard {
         #[command(subcommand)]
         cmd: KeyboardCmd,
+    },
+    /// GMMK Pro keyboard on its stock firmware: lighting
+    GmmkPro {
+        #[command(subcommand)]
+        cmd: GmmkProCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum GmmkProCmd {
+    /// Active profile/layer and the effect list
+    Info,
+    /// Set the lighting of the active profile/layer, e.g. `lighting wave --color ff8800`.
+    /// Effects: off, glorious, wave, wave-2, spiral, acid, breathing, solid, ripple, trace,
+    /// fast-trace, matrix, matrix-3, rainbow, heartbeat, digital-times, kamehameha, pingpong, surmount
+    Lighting {
+        effect: String,
+        /// Hex RGB. Most animated effects then run in this one colour; without it they use their own
+        #[arg(long)]
+        color: Option<String>,
+        /// 0-100
+        #[arg(long, default_value_t = 60)]
+        brightness: u8,
+        /// 0-100
+        #[arg(long, default_value_t = 50)]
+        speed: u8,
     },
 }
 
@@ -336,12 +363,28 @@ fn raw(m: &Mouse, target: &str, cmd: &str, payload: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn gmmk_pro(cmd: GmmkProCmd) -> Result<()> {
+    match cmd {
+        GmmkProCmd::Info => gmmkpro::info(),
+        GmmkProCmd::Lighting { effect, color, brightness, speed } => {
+            let color = color.as_deref().map(hex_rgb).transpose()?;
+            let l = gmmkpro::Lighting { effect: gmmkpro::effect_id(&effect)?, color, brightness, speed };
+            let (profile, layer) = gmmkpro::apply(&l)?;
+            let (name, _) = gmmkpro::EFFECTS[usize::from(l.effect)];
+            let shown = color.map_or("own colours".into(), |[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"));
+            println!("{name} {shown} @{brightness}% speed {speed} (profile {profile}, layer {layer})");
+            Ok(())
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         None => gui::run(),
         Some(Top::Mouse { cmd }) => mouse(cmd, cli.verbose),
         Some(Top::Keyboard { cmd: KeyboardCmd::Info }) => gmmk3he::cli(),
+        Some(Top::GmmkPro { cmd }) => gmmk_pro(cmd),
     }
 }
 
